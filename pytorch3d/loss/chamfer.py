@@ -74,6 +74,8 @@ def chamfer_distance(
     y_lengths=None,
     x_normals=None,
     y_normals=None,
+    x_curvatures=None,
+    y_curvatures=None,
     weights=None,
     batch_reduction: Union[str, None] = "mean",
     point_reduction: str = "mean",
@@ -94,6 +96,8 @@ def chamfer_distance(
             cloud in x.
         x_normals: Optional FloatTensor of shape (N, P1, D).
         y_normals: Optional FloatTensor of shape (N, P2, D).
+        x_curvatures: Optional FloatTensor of shape (N, P1, 1).
+        y_curvatures: Optional FloatTensor of shape (N, P2, 1).
         weights: Optional FloatTensor of shape (N,) giving weights for
             batch elements for reduction operation.
         batch_reduction: Reduction operation to apply for the loss across the
@@ -102,13 +106,16 @@ def chamfer_distance(
             points, can be one of ["mean", "sum"].
 
     Returns:
-        2-element tuple containing
+        3-element tuple containing
 
         - **loss**: Tensor giving the reduced distance between the pointclouds
           in x and the pointclouds in y.
         - **loss_normals**: Tensor giving the reduced cosine distance of normals
           between pointclouds in x and pointclouds in y. Returns None if
           x_normals and y_normals are None.
+        - **loss_curvatures**: Tensor giving the reduced absolute difference
+          between the mean curvatures in x and the mean curvatures in y.
+          Returns None if x_curvatures and y_curvatures are None.
     """
     _validate_chamfer_reduction_inputs(batch_reduction, point_reduction)
 
@@ -116,6 +123,7 @@ def chamfer_distance(
     y, y_lengths, y_normals = _handle_pointcloud_input(y, y_lengths, y_normals)
 
     return_normals = x_normals is not None and y_normals is not None
+    return_curvature = x_curvatures is not None and y_curvatures is not None
 
     N, P1, D = x.shape
     P2 = y.shape[1]
@@ -185,18 +193,47 @@ def chamfer_distance(
             cham_norm_x *= weights.view(N, 1)
             cham_norm_y *= weights.view(N, 1)
 
+    if return_curvature:
+        if (x_curvatures.ndim != 3 or y_curvatures.ndim != 3):
+            raise ValueError("Curvatures should be of shape (N,M,1).")
+        if (x_curvatures.shape[2] != 1 or y_curvatures.shape[2] != 1):
+            raise ValueError("Curvatures should be of shape (N,M,1).")
+
+        # Gather the curvatures using the indices and keep only value for k=0
+        x_curv_near = knn_gather(y_curvatures, x_nn.idx, y_lengths)[..., 0, 0]
+        y_curv_near = knn_gather(x_curvatures, y_nn.idx, x_lengths)[..., 0, 0]
+
+        # Absolute value of difference in curvature
+        cham_curv_x = torch.abs(x_curvatures[..., 0] - x_curv_near)
+        cham_curv_y = torch.abs(y_curvatures[..., 0] - y_curv_near)
+
+        if is_x_heterogeneous:
+            cham_curv_x[x_mask] = 0.0
+        if is_y_heterogeneous:
+            cham_curv_y[y_mask] = 0.0
+
+        if weights is not None:
+            cham_curv_x *= weights.view(N, 1)
+            cham_curv_y *= weights.view(N, 1)
+
     # Apply point reduction
     cham_x = cham_x.sum(1)  # (N,)
     cham_y = cham_y.sum(1)  # (N,)
     if return_normals:
         cham_norm_x = cham_norm_x.sum(1)  # (N,)
         cham_norm_y = cham_norm_y.sum(1)  # (N,)
+    if return_curvature:
+        cham_curv_x = cham_curv_x.sum(1)  # (N,)
+        cham_curv_y = cham_curv_y.sum(1)  # (N,)
     if point_reduction == "mean":
         cham_x /= x_lengths
         cham_y /= y_lengths
         if return_normals:
             cham_norm_x /= x_lengths
             cham_norm_y /= y_lengths
+        if return_curvature:
+            cham_curv_x /= x_lengths
+            cham_curv_y /= y_lengths
 
     if batch_reduction is not None:
         # batch_reduction == "sum"
@@ -205,6 +242,9 @@ def chamfer_distance(
         if return_normals:
             cham_norm_x = cham_norm_x.sum()
             cham_norm_y = cham_norm_y.sum()
+        if return_curvature:
+            cham_curv_x = cham_curv_x.sum()
+            cham_curv_y = cham_curv_y.sum()
         if batch_reduction == "mean":
             div = weights.sum() if weights is not None else N
             cham_x /= div
@@ -212,8 +252,12 @@ def chamfer_distance(
             if return_normals:
                 cham_norm_x /= div
                 cham_norm_y /= div
+            if return_curvature:
+                cham_curv_x /= div
+                cham_curv_y /= div
 
     cham_dist = cham_x + cham_y
     cham_normals = cham_norm_x + cham_norm_y if return_normals else None
+    cham_curv = cham_curv_x + cham_curv_y if return_curvature else None
 
-    return cham_dist, cham_normals
+    return cham_dist, cham_normals, cham_curv
