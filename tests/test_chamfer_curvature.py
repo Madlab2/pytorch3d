@@ -38,4 +38,4 @@ class TestChamferCurvature(unittest.TestCase):
         print("Chamfer: ", str(d))
         print("Difference in curvature: ", str(d_curv))
 
-        self.assertTrue(torch.allclose(d_curv, torch.tensor(0.0)))
+        self.assertTrue(torch.allclose(d_curv, torch.tensor(0.0), atol=1e-6))
