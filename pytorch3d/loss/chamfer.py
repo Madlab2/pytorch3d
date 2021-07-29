@@ -79,6 +79,7 @@ def chamfer_distance(
     weights=None,
     batch_reduction: Union[str, None] = "mean",
     point_reduction: str = "mean",
+    point_weights=None,
 ):
     """
     Chamfer distance between two pointclouds x and y.
@@ -104,6 +105,8 @@ def chamfer_distance(
             batch, can be one of ["mean", "sum"] or None.
         point_reduction: Reduction operation to apply for the loss across the
             points, can be one of ["mean", "sum"].
+        point_weights: Optional FloatTensor of shape (N,P2,) giving weights for
+        points in y.
 
     Returns:
         3-element tuple containing
@@ -115,7 +118,8 @@ def chamfer_distance(
           x_normals and y_normals are None.
         - **loss_curvatures**: Tensor giving the reduced absolute difference
           between the mean curvatures in x and the mean curvatures in y.
-          Returns None if x_curvatures and y_curvatures are None.
+          Returns None if
+          x_curvatures and y_curvatures are None.
     """
     _validate_chamfer_reduction_inputs(batch_reduction, point_reduction)
 
@@ -167,6 +171,11 @@ def chamfer_distance(
         cham_x[x_mask] = 0.0
     if is_y_heterogeneous:
         cham_y[y_mask] = 0.0
+
+    if point_weights is not None:
+        cham_x *= knn_gather(point_weights.view(N, P2, 1), x_nn.idx,
+                             y_lengths).view(N, P1)
+        cham_y *= point_weights.view(N, P2)
 
     if weights is not None:
         cham_x *= weights.view(N, 1)
