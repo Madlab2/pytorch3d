@@ -80,6 +80,7 @@ def chamfer_distance(
     batch_reduction: Union[str, None] = "mean",
     point_reduction: str = "mean",
     point_weights=None,
+    oriented_cosine_similarity=False,
 ):
     """
     Chamfer distance between two pointclouds x and y.
@@ -107,6 +108,8 @@ def chamfer_distance(
             points, can be one of ["mean", "sum"].
         point_weights: Optional FloatTensor of shape (N,P2,) giving weights for
         points in y.
+        oriented_cosine: If set to True and x_normals and y_normals are not
+        None, the cosine similarity considers the orientation of normals.
 
     Returns:
         3-element tuple containing
@@ -186,12 +189,20 @@ def chamfer_distance(
         x_normals_near = knn_gather(y_normals, x_nn.idx, y_lengths)[..., 0, :]
         y_normals_near = knn_gather(x_normals, y_nn.idx, x_lengths)[..., 0, :]
 
-        cham_norm_x = 1 - torch.abs(
-            F.cosine_similarity(x_normals, x_normals_near, dim=2, eps=1e-6)
-        )
-        cham_norm_y = 1 - torch.abs(
-            F.cosine_similarity(y_normals, y_normals_near, dim=2, eps=1e-6)
-        )
+        if oriented_cosine_similarity:
+            cham_norm_x = 1 - F.cosine_similarity(
+                x_normals, x_normals_near, dim=2, eps=1e-6
+            )
+            cham_norm_y = 1 - F.cosine_similarity(
+                y_normals, y_normals_near, dim=2, eps=1e-6
+            )
+        else:
+            cham_norm_x = 1 - torch.abs(
+                F.cosine_similarity(x_normals, x_normals_near, dim=2, eps=1e-6)
+            )
+            cham_norm_y = 1 - torch.abs(
+                F.cosine_similarity(y_normals, y_normals_near, dim=2, eps=1e-6)
+            )
 
         if is_x_heterogeneous:
             cham_norm_x[x_mask] = 0.0
