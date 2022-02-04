@@ -56,7 +56,7 @@ class _PointFaceDistance(Function):
             points, points_first_idx, tris, tris_first_idx, max_points
         )
         ctx.save_for_backward(points, tris, idxs)
-        return dists
+        return dists, idxs
 
     @staticmethod
     @once_differentiable
