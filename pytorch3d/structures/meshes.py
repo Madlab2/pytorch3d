@@ -210,6 +210,7 @@ class Meshes:
         "_laplacian_packed",
         "valid",
         "equisized",
+        "_verts_features_packed",
     ]
 
     def __init__(
@@ -219,6 +220,7 @@ class Meshes:
         textures=None,
         *,
         verts_normals=None,
+        verts_features=None,
     ) -> None:
         """
         Args:
@@ -252,6 +254,15 @@ class Meshes:
                 Note that modifying the mesh later, e.g. with offset_verts_,
                 can cause these normals to be forgotten and normals to be recalculated
                 based on the new vertex positions.
+            verts_features:
+                Optional. Can be either
+
+                - List where each element is a tensor of shape (num_verts,
+                feature_dim) containing the normals of each vertex.
+                - Padded float tensor with shape (num_meshes, max_num_verts,
+                feature_dim).
+                  They should be padded with fill value of 0 so they all have
+                  the same number of vertices.
 
         Refer to comments above for descriptions of List and Padded representations.
         """
@@ -334,6 +345,9 @@ class Meshes:
         # Normals
         self._verts_normals_packed = None
         self._faces_normals_packed = None
+
+        # Features
+        self._verts_features_packed = None
 
         # Packed representation of Laplacian Matrix
         self._laplacian_packed = None
@@ -441,6 +455,33 @@ class Meshes:
 
         if verts_normals is not None:
             self._set_verts_normals(verts_normals)
+        if verts_features is not None:
+            self._set_verts_features(verts_features)
+
+    def _set_verts_features(self, verts_features) -> None:
+        if isinstance(verts_features, list):
+            if len(verts_features) != self._N:
+                raise ValueError("Invalid verts_features input")
+
+            for item, n_verts in zip(verts_features, self._num_verts_per_mesh):
+                if (
+                    not isinstance(item, torch.Tensor)
+                    or item.ndim != 2
+                    or item.shape[0] != n_verts
+                ):
+                    raise ValueError("Invalid verts_features input")
+            self._verts_features_packed = torch.cat(verts_features, 0)
+        elif torch.is_tensor(verts_features):
+            if (
+                verts_features.ndim != 3
+                or verts_features.size(0) != self._N
+            ):
+                raise ValueError("Vertex normals tensor has incorrect dimensions.")
+            self._verts_features_packed = struct_utils.padded_to_packed(
+                verts_features, split_size=self._num_verts_per_mesh.tolist()
+            )
+        else:
+            raise ValueError("verts_features must be a list or tensor")
 
     def _set_verts_normals(self, verts_normals) -> None:
         if isinstance(verts_normals, list):
@@ -747,6 +788,15 @@ class Meshes:
         """
         return self._verts_normals_packed is not None
 
+    def verts_features_packed(self):
+        """
+        Get the packed representation of the vertex normals.
+
+        Returns:
+            tensor of normals of shape (sum(V_n), 3).
+        """
+        return self._verts_features_packed
+
     def verts_normals_packed(self):
         """
         Get the packed representation of the vertex normals.
@@ -756,6 +806,21 @@ class Meshes:
         """
         self._compute_vertex_normals()
         return self._verts_normals_packed
+
+    def verts_features_list(self):
+        """
+        Get the list representation of the verts_features.
+
+        Returns:
+            list of tensors of normals of shape (V_n, feature_dim).
+        """
+        if self.isempty():
+            return [
+                torch.empty((0, 3), dtype=torch.float32, device=self.device)
+            ] * self._N
+        verts_features_packed = self.verts_features_packed()
+        split_size = self.num_verts_per_mesh().tolist()
+        return struct_utils.packed_to_list(verts_features_packed, split_size)
 
     def verts_normals_list(self):
         """
@@ -784,6 +849,20 @@ class Meshes:
         verts_normals_list = self.verts_normals_list()
         return struct_utils.list_to_padded(
             verts_normals_list, (self._V, 3), pad_value=0.0, equisized=self.equisized
+        )
+
+    def verts_features_padded(self):
+        """
+        Get the padded representation of the verts_features.
+
+        Returns:
+            tensor of verts_features of shape (N, max(V_n), feature_dim).
+        """
+        if self.isempty():
+            return torch.zeros((self._N, 0, 1), dtype=torch.float32, device=self.device)
+        verts_features_list = self.verts_features_list()
+        return struct_utils.list_to_padded(
+            verts_features_list, (self._V, verts_features_list[0].shape[1]), pad_value=0.0, equisized=self.equisized
         )
 
     def faces_normals_packed(self):
