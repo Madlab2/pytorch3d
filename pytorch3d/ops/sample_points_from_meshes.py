@@ -174,6 +174,7 @@ def sample_points_from_meshes(
     # TODO(fabibo3): Pointclouds do not support features and textures at the
     # same time
     if return_normals and return_textures and interpolate_features:
+        # pyre-fixme[61]: `sample_features` may not be initialized here.
         # pyre-fixme[61]: `normals` may not be initialized here.
         # pyre-fixme[61]: `textures` may not be initialized here.
         return samples, normals, textures, sample_features
@@ -182,9 +183,11 @@ def sample_points_from_meshes(
         # pyre-fixme[61]: `textures` may not be initialized here.
         return samples, normals, textures
     if return_normals and interpolate_sample_features:  # return_textures is False
+        # pyre-fixme[61]: `sample_features` may not be initialized here.
         # pyre-fixme[61]: `normals` may not be initialized here.
         return samples, normals, sample_features
     if return_textures and interpolate_sample_features:  # return_normals is False
+        # pyre-fixme[61]: `sample_features` may not be initialized here.
         # pyre-fixme[61]: `textures` may not be initialized here.
         return samples, textures, sample_features
     if interpolate_sample_features:
