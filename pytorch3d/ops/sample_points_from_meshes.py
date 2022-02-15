@@ -23,10 +23,12 @@ def sample_points_from_meshes(
     num_samples: int = 10000,
     return_normals: bool = False,
     return_textures: bool = False,
+    interpolate_features: str =  None,
 ) -> Union[
     torch.Tensor,
     Tuple[torch.Tensor, torch.Tensor],
     Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+    Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
 ]:
     """
     Convert a batch of meshes to a batch of pointclouds by uniformly sampling
@@ -38,9 +40,13 @@ def sample_points_from_meshes(
         num_samples: Integer giving the number of point samples per mesh.
         return_normals: If True, return normals for the sampled points.
         return_textures: If True, return textures for the sampled points.
+        interpolate_features: If 'barycentric', use barycentric coordinates of
+        the sampled surface points to interpolate vertex features. If
+        'majority', use majority voting for the class of the sampled surface
+        points.
 
     Returns:
-        3-element tuple containing
+        4-element tuple containing
 
         - **samples**: FloatTensor of shape (N, num_samples, 3) giving the
           coordinates of sampled points for each mesh in the batch. For empty
@@ -53,6 +59,9 @@ def sample_points_from_meshes(
           texture vector to each sampled point. Only returned if return_textures is True.
           For empty meshes the corresponding row in the textures array will
           be filled with 0.
+        - **sample_features**: Tensor of shape (N, num_samples, D) giving
+        D-dimensional features per point interpolated from the vertex features
+        of the mesh.
 
         Note that in a future releases, we will replace the 3-element tuple output
         with a `Pointclouds` datastructure, as follows
@@ -65,11 +74,15 @@ def sample_points_from_meshes(
         raise ValueError("Meshes are empty.")
 
     verts = meshes.verts_packed()
+    features = meshes.verts_features_packed()
     if not torch.isfinite(verts).all():
         raise ValueError("Meshes contain nan or inf.")
 
     if return_textures and meshes.textures is None:
         raise ValueError("Meshes do not contain textures.")
+
+    if (interpolate_features is not None and features is None):
+        raise ValueError("Meshes do not contain vertex features.")
 
     faces = meshes.faces_packed()
     mesh_to_face = meshes.mesh_to_faces_packed_first_idx()
@@ -134,12 +147,49 @@ def sample_points_from_meshes(
         textures = meshes.sample_textures(fragments)  # NxSx1x1xC
         textures = textures[:, :, 0, 0, :]  # NxSxC
 
+    if interpolate_features is not None:
+        D = features.shape[-1] # feature-dim
+        # Features for the sampled points are features computed from
+        # the vertices of the face in which the sampled point lies.
+        # Initialize features tensor with fill value -1 for empty meshes.
+        sample_features = -1 * torch.ones((num_meshes, num_samples, D), device=meshes.device)
+        face_features = features[faces]
+        if interpolate_features == 'barycentric':
+            f0, f1, f2 = face_features[:, 0], face_features[:, 1], face_features[:, 2]
+            # Use the barycentric coords to interpolate features
+            a = f0[sample_face_idxs]  # (N, num_samples, D)
+            b = f1[sample_face_idxs]
+            c = f2[sample_face_idxs]
+            sample_features[meshes.valid] = w0[:, :, None] * a + w1[:, :, None] * b + w2[:, :, None] * c
+
+        elif interpolate_features == 'majority':
+            face_features_sampled = face_features[sample_face_idxs]
+            sample_features = torch.mode(face_features_sampled, dim=2)[0]
+
+        else:
+            raise ValueError("Unknown interpolation %s", interpolate_features)
+
     # return
     # TODO(gkioxari) consider returning a Pointclouds instance [breaking]
+    # TODO(fabibo3): Pointclouds do not support features and textures at the
+    # same time
+    if return_normals and return_textures and interpolate_features:
+        # pyre-fixme[61]: `normals` may not be initialized here.
+        # pyre-fixme[61]: `textures` may not be initialized here.
+        return samples, normals, textures, sample_features
     if return_normals and return_textures:
         # pyre-fixme[61]: `normals` may not be initialized here.
         # pyre-fixme[61]: `textures` may not be initialized here.
         return samples, normals, textures
+    if return_normals and interpolate_sample_features:  # return_textures is False
+        # pyre-fixme[61]: `normals` may not be initialized here.
+        return samples, normals, sample_features
+    if return_textures and interpolate_sample_features:  # return_normals is False
+        # pyre-fixme[61]: `textures` may not be initialized here.
+        return samples, textures, sample_features
+    if interpolate_sample_features:
+        # pyre-fixme[61]: `sample_features` may not be initialized here.
+        return samples, sample_features
     if return_normals:  # return_textures is False
         # pyre-fixme[61]: `normals` may not be initialized here.
         return samples, normals
