@@ -27,7 +27,8 @@ class _PointFaceDistance(Function):
     """
 
     @staticmethod
-    def forward(ctx, points, points_first_idx, tris, tris_first_idx, max_points):
+    def forward(ctx, points, points_first_idx, tris, tris_first_idx,
+                max_points, return_idx=False):
         """
         Args:
             ctx: Context object used to calculate gradients.
@@ -56,7 +57,11 @@ class _PointFaceDistance(Function):
             points, points_first_idx, tris, tris_first_idx, max_points
         )
         ctx.save_for_backward(points, tris, idxs)
-        return dists, idxs
+
+        if return_idx:
+            return dists, idxs
+
+        return dists
 
     @staticmethod
     @once_differentiable
@@ -80,7 +85,8 @@ class _FacePointDistance(Function):
     """
 
     @staticmethod
-    def forward(ctx, points, points_first_idx, tris, tris_first_idx, max_tris):
+    def forward(ctx, points, points_first_idx, tris, tris_first_idx, max_tris,
+               return_idx=False):
         """
         Args:
             ctx: Context object used to calculate gradients.
@@ -107,6 +113,10 @@ class _FacePointDistance(Function):
             points, points_first_idx, tris, tris_first_idx, max_tris
         )
         ctx.save_for_backward(points, tris, idxs)
+
+        if return_idx:
+            return dists, idxs
+
         return dists
 
     @staticmethod
