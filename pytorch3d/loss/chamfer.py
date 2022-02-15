@@ -74,7 +74,7 @@ def chamfer_distance(
     y_lengths=None,
     x_normals=None,
     y_normals=None,
-    weights=None,
+    batch_weights=None,
     batch_reduction: Union[str, None] = "mean",
     point_reduction: str = "mean",
     point_weights=None,
@@ -96,7 +96,7 @@ def chamfer_distance(
             cloud in x.
         x_normals: Optional FloatTensor of shape (N, P1, D).
         y_normals: Optional FloatTensor of shape (N, P2, D).
-        weights: Optional FloatTensor of shape (N,) giving weights for
+        batch_weights: Optional FloatTensor of shape (N,) giving weights for
             batch elements for reduction operation.
         batch_reduction: Reduction operation to apply for the loss across the
             batch, can be one of ["mean", "sum"] or None.
@@ -138,19 +138,19 @@ def chamfer_distance(
 
     if y.shape[0] != N or y.shape[2] != D:
         raise ValueError("y does not have the correct shape.")
-    if weights is not None:
-        if weights.size(0) != N:
-            raise ValueError("weights must be of shape (N,).")
-        if not (weights >= 0).all():
-            raise ValueError("weights cannot be negative.")
-        if weights.sum() == 0.0:
-            weights = weights.view(N, 1)
+    if batch_weights is not None:
+        if batch_weights.size(0) != N:
+            raise ValueError("batch_weights must be of shape (N,).")
+        if not (batch_weights >= 0).all():
+            raise ValueError("batch_weights cannot be negative.")
+        if batch_weights.sum() == 0.0:
+            batch_weights = batch_weights.view(N, 1)
             if batch_reduction in ["mean", "sum"]:
                 return (
-                    (x.sum((1, 2)) * weights).sum() * 0.0,
-                    (x.sum((1, 2)) * weights).sum() * 0.0,
+                    (x.sum((1, 2)) * batch_weights).sum() * 0.0,
+                    (x.sum((1, 2)) * batch_weights).sum() * 0.0,
                 )
-            return ((x.sum((1, 2)) * weights) * 0.0, (x.sum((1, 2)) * weights) * 0.0)
+            return ((x.sum((1, 2)) * batch_weights) * 0.0, (x.sum((1, 2)) * batch_weights) * 0.0)
 
     cham_norm_x = x.new_zeros(())
     cham_norm_y = x.new_zeros(())
@@ -171,9 +171,9 @@ def chamfer_distance(
                              y_lengths).view(N, P1)
         cham_y *= point_weights.view(N, P2)
 
-    if weights is not None:
-        cham_x *= weights.view(N, 1)
-        cham_y *= weights.view(N, 1)
+    if batch_weights is not None:
+        cham_x *= batch_weights.view(N, 1)
+        cham_y *= batch_weights.view(N, 1)
 
     if return_normals:
         # Gather the normals using the indices and keep only value for k=0
@@ -200,9 +200,9 @@ def chamfer_distance(
         if is_y_heterogeneous:
             cham_norm_y[y_mask] = 0.0
 
-        if weights is not None:
-            cham_norm_x *= weights.view(N, 1)
-            cham_norm_y *= weights.view(N, 1)
+        if batch_weights is not None:
+            cham_norm_x *= batch_weights.view(N, 1)
+            cham_norm_y *= batch_weights.view(N, 1)
 
     # Apply point reduction
     cham_x = cham_x.sum(1)  # (N,)
@@ -225,7 +225,7 @@ def chamfer_distance(
             cham_norm_x = cham_norm_x.sum()
             cham_norm_y = cham_norm_y.sum()
         if batch_reduction == "mean":
-            div = weights.sum() if weights is not None else N
+            div = batch_weights.sum() if batch_weights is not None else N
             cham_x /= div
             cham_y /= div
             if return_normals:
