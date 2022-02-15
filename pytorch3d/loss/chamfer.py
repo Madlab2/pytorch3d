@@ -167,9 +167,12 @@ def chamfer_distance(
         cham_y[y_mask] = 0.0
 
     if point_weights is not None:
-        cham_x *= knn_gather(point_weights.view(N, P2, 1), x_nn.idx,
-                             y_lengths).view(N, P1)
-        cham_y *= point_weights.view(N, P2)
+        x_weights = knn_gather(
+            point_weights.view(N, P2, 1), x_nn.idx, y_lengths
+        ).view(N, P1)
+        y_weights = point_weights.view(N, P2)
+        cham_x *= x_weights
+        cham_y *= y_weights
 
     if batch_weights is not None:
         cham_x *= batch_weights.view(N, 1)
@@ -211,8 +214,13 @@ def chamfer_distance(
         cham_norm_x = cham_norm_x.sum(1)  # (N,)
         cham_norm_y = cham_norm_y.sum(1)  # (N,)
     if point_reduction == "mean":
-        cham_x /= x_lengths
-        cham_y /= y_lengths
+        if point_weights is not None:
+            # Normalize by weight sum
+            cham_x /= x_weights.sum(dim=1)
+            cham_y /= y_weights.sum(dim=1)
+        else:
+            cham_x /= x_lengths
+            cham_y /= y_lengths
         if return_normals:
             cham_norm_x /= x_lengths
             cham_norm_y /= y_lengths
