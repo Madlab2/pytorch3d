@@ -818,6 +818,8 @@ class Meshes:
             return [
                 torch.empty((0, 3), dtype=torch.float32, device=self.device)
             ] * self._N
+        if self._verts_features_packed is None:
+            return None
         verts_features_packed = self.verts_features_packed()
         split_size = self.num_verts_per_mesh().tolist()
         return struct_utils.packed_to_list(verts_features_packed, split_size)
@@ -860,6 +862,8 @@ class Meshes:
         """
         if self.isempty():
             return torch.zeros((self._N, 0, 1), dtype=torch.float32, device=self.device)
+        if self._verts_features_packed is None:
+            return None
         verts_features_list = self.verts_features_list()
         return struct_utils.list_to_padded(
             verts_features_list, (self._V, verts_features_list[0].shape[1]), pad_value=0.0, equisized=self.equisized
