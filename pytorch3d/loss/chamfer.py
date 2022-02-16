@@ -108,7 +108,7 @@ def chamfer_distance(
         None, the cosine similarity considers the orientation of normals.
 
     Returns:
-        3-element tuple containing
+        2-element tuple containing
 
         - **loss**: Tensor giving the reduced distance between the pointclouds
           in x and the pointclouds in y.
