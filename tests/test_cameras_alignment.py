@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -31,7 +31,6 @@ class TestCamerasAlignment(TestCaseMixin, unittest.TestCase):
         """
         Checks the corresponding_cameras_alignment function.
         """
-        self.skipTest("Temporarily disabled pending investigation")
         device = torch.device("cuda:0")
 
         # try few different random setups
@@ -134,10 +133,10 @@ class TestCamerasAlignment(TestCaseMixin, unittest.TestCase):
                     )
                 elif mode == "extrinsics":
                     angle_err = so3_relative_angle(
-                        cameras_aligned.R, cameras_tgt.R
+                        cameras_aligned.R, cameras_tgt.R, cos_angle=True
                     ).mean()
                     self.assertClose(
-                        angle_err, torch.zeros_like(angle_err), atol=add_noise * 10.0
+                        angle_err, torch.ones_like(angle_err), atol=add_noise * 0.03
                     )
                     self.assertNormsClose(
                         cameras_aligned.T, cameras_tgt.T, _rmse, atol=add_noise * 7.0

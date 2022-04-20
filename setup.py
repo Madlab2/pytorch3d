@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -13,7 +13,7 @@ from typing import List, Optional
 
 import torch
 from setuptools import find_packages, setup
-from torch.utils.cpp_extension import CUDA_HOME, CppExtension, CUDAExtension
+from torch.utils.cpp_extension import CppExtension, CUDA_HOME, CUDAExtension
 
 
 def get_existing_ccbin(nvcc_args: List[str]) -> Optional[str]:
@@ -57,12 +57,13 @@ def get_extensions():
         define_macros += [("THRUST_IGNORE_CUB_VERSION_CHECK", None)]
         cub_home = os.environ.get("CUB_HOME", None)
         nvcc_args = [
-            "-std=c++14",
             "-DCUDA_HAS_FP16=1",
             "-D__CUDA_NO_HALF_OPERATORS__",
             "-D__CUDA_NO_HALF_CONVERSIONS__",
             "-D__CUDA_NO_HALF2_OPERATORS__",
         ]
+        if os.name != "nt":
+            nvcc_args.append("-std=c++14")
         if cub_home is None:
             prefix = os.environ.get("CONDA_PREFIX", None)
             if prefix is not None and os.path.isdir(prefix + "/include/cub"):
@@ -128,6 +129,7 @@ if os.getenv("PYTORCH3D_NO_NINJA", "0") == "1":
 else:
     BuildExtension = torch.utils.cpp_extension.BuildExtension
 
+trainer = "projects.implicitron_trainer"
 
 setup(
     name="pytorch3d",
@@ -137,12 +139,19 @@ setup(
     description="PyTorch3D is FAIR's library of reusable components "
     "for deep Learning with 3D data.",
     packages=find_packages(
-        exclude=("configs", "tests", "tests.*", "docs.*", "projects.*")
+        exclude=("configs", "tests", "tests.*", "docs.*", "projects.nerf.*")
     ),
     install_requires=["fvcore", "iopath"],
     extras_require={
         "all": ["matplotlib", "tqdm>4.29.0", "imageio", "ipywidgets"],
         "dev": ["flake8", "isort", "black==19.3b0"],
+        "implicitron": ["hydra-core>=1.1", "visdom", "lpips", "matplotlib"],
+    },
+    entry_points={
+        "console_scripts": [
+            f"pytorch3d_implicitron_runner={trainer}.experiment",
+            f"pytorch3d_implicitron_visualizer={trainer}.visualize_reconstruction",
+        ]
     },
     ext_modules=get_extensions(),
     cmdclass={"build_ext": BuildExtension},

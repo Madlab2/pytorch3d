@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -9,7 +9,7 @@ from typing import Dict, List
 
 import numpy as np
 import torch
-from pytorch3d.common.types import Device
+from pytorch3d.common.datatypes import Device
 from pytorch3d.datasets.utils import collate_batched_meshes
 from pytorch3d.ops import cubify
 from pytorch3d.renderer import (
@@ -25,11 +25,11 @@ from pytorch3d.transforms import Transform3d
 
 
 # Empirical min and max over the dataset from meshrcnn.
-# https://github.com/facebookresearch/meshrcnn/blob/master/shapenet/utils/coords.py#L9
+# https://github.com/facebookresearch/meshrcnn/blob/main/shapenet/utils/coords.py#L9
 SHAPENET_MIN_ZMIN = 0.67
 SHAPENET_MAX_ZMAX = 0.92
 # Threshold for cubify from meshrcnn:
-# https://github.com/facebookresearch/meshrcnn/blob/master/configs/shapenet/voxmesh_R50.yaml#L11
+# https://github.com/facebookresearch/meshrcnn/blob/main/configs/shapenet/voxmesh_R50.yaml#L11
 CUBIFY_THRESH = 0.2
 
 # Default values of rotation, translation and intrinsic matrices for BlenderCamera.
@@ -98,10 +98,12 @@ def collate_batched_R2N2(batch: List[Dict]):  # pragma: no cover
     return collated_dict
 
 
-def compute_extrinsic_matrix(azimuth, elevation, distance):  # pragma: no cover
+def compute_extrinsic_matrix(
+    azimuth: float, elevation: float, distance: float
+):  # pragma: no cover
     """
     Copied from meshrcnn codebase:
-    https://github.com/facebookresearch/meshrcnn/blob/master/shapenet/utils/coords.py#L96
+    https://github.com/facebookresearch/meshrcnn/blob/main/shapenet/utils/coords.py#L96
 
     Compute 4x4 extrinsic matrix that converts from homogeneous world coordinates
     to homogeneous camera coordinates. We assume that the camera is looking at the
@@ -138,17 +140,20 @@ def compute_extrinsic_matrix(azimuth, elevation, distance):  # pragma: no cover
     # rotates the model 90 degrees about the x axis. To compensate for this quirk we
     # roll that rotation into the extrinsic matrix here
     rot = torch.tensor([[1, 0, 0, 0], [0, 0, -1, 0], [0, 1, 0, 0], [0, 0, 0, 1]])
+    # pyre-fixme[16]: `Tensor` has no attribute `mm`.
     RT = RT.mm(rot.to(RT))
 
     return RT
 
 
 def read_binvox_coords(
-    f, integer_division: bool = True, dtype: torch.dtype = torch.float32
+    f,
+    integer_division: bool = True,
+    dtype: torch.dtype = torch.float32,
 ):  # pragma: no cover
     """
     Copied from meshrcnn codebase:
-    https://github.com/facebookresearch/meshrcnn/blob/master/shapenet/utils/binvox_torch.py#L5
+    https://github.com/facebookresearch/meshrcnn/blob/main/shapenet/utils/binvox_torch.py#L5
 
     Read a binvox file and return the indices of all nonzero voxels.
 
@@ -191,7 +196,7 @@ def read_binvox_coords(
 def _compute_idxs(vals, counts):  # pragma: no cover
     """
     Copied from meshrcnn codebase:
-    https://github.com/facebookresearch/meshrcnn/blob/master/shapenet/utils/binvox_torch.py#L58
+    https://github.com/facebookresearch/meshrcnn/blob/main/shapenet/utils/binvox_torch.py#L58
 
     Fast vectorized version of index computation.
 
@@ -244,7 +249,7 @@ def _compute_idxs(vals, counts):  # pragma: no cover
 def _read_binvox_header(f):  # pragma: no cover
     """
     Copied from meshrcnn codebase:
-    https://github.com/facebookresearch/meshrcnn/blob/master/shapenet/utils/binvox_torch.py#L99
+    https://github.com/facebookresearch/meshrcnn/blob/main/shapenet/utils/binvox_torch.py#L99
 
     Read binvox header and extract information regarding voxel sizes and translations
     to original voxel coordinates.
@@ -308,7 +313,7 @@ def _read_binvox_header(f):  # pragma: no cover
 def align_bbox(src, tgt):  # pragma: no cover
     """
     Copied from meshrcnn codebase:
-    https://github.com/facebookresearch/meshrcnn/blob/master/tools/preprocess_shapenet.py#L263
+    https://github.com/facebookresearch/meshrcnn/blob/main/tools/preprocess_shapenet.py#L263
 
     Return a copy of src points in the coordinate system of tgt by applying a
     scale and shift along each coordinate axis to make the min / max values align.
@@ -338,7 +343,7 @@ def align_bbox(src, tgt):  # pragma: no cover
 def voxelize(voxel_coords, P, V):  # pragma: no cover
     """
     Copied from meshrcnn codebase:
-    https://github.com/facebookresearch/meshrcnn/blob/master/tools/preprocess_shapenet.py#L284
+    https://github.com/facebookresearch/meshrcnn/blob/main/tools/preprocess_shapenet.py#L284
     but changing flip y to flip x.
 
     Creating voxels of shape (D, D, D) from voxel_coords and projection matrix.
@@ -382,10 +387,10 @@ def voxelize(voxel_coords, P, V):  # pragma: no cover
     return voxels
 
 
-def project_verts(verts, P, eps=1e-1):  # pragma: no cover
+def project_verts(verts, P, eps: float = 1e-1):  # pragma: no cover
     """
     Copied from meshrcnn codebase:
-    https://github.com/facebookresearch/meshrcnn/blob/master/shapenet/utils/coords.py#L159
+    https://github.com/facebookresearch/meshrcnn/blob/main/shapenet/utils/coords.py#L159
 
     Project vertices using a 4x4 transformation matrix.
 
@@ -453,6 +458,12 @@ class BlenderCamera(CamerasBase):  # pragma: no cover
         transform = Transform3d(device=self.device)
         transform._matrix = self.K.transpose(1, 2).contiguous()
         return transform
+
+    def is_perspective(self):
+        return False
+
+    def in_ndc(self):
+        return True
 
 
 def render_cubified_voxels(

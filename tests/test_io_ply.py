@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -510,6 +510,45 @@ class TestMeshPlyIO(TestCaseMixin, unittest.TestCase):
             torch.FloatTensor([3, 4, 5]) + 7 * torch.arange(8)[:, None],
         )
 
+    def test_load_open3d_mesh(self):
+        # Header based on issue #1104
+        header = "\n".join(
+            [
+                "ply",
+                "format binary_little_endian 1.0",
+                "comment Created by Open3D",
+                "element vertex 3",
+                "property double x",
+                "property double y",
+                "property double z",
+                "property double nx",
+                "property double ny",
+                "property double nz",
+                "property uchar red",
+                "property uchar green",
+                "property uchar blue",
+                "element face 1",
+                "property list uchar uint vertex_indices",
+                "end_header",
+                "",
+            ]
+        ).encode("ascii")
+        vert_data = struct.pack("<" + "ddddddBBB" * 3, *range(9 * 3))
+        face_data = struct.pack("<" + "BIII", 3, 0, 1, 2)
+        io = IO()
+        with NamedTemporaryFile(mode="wb", suffix=".ply") as f:
+            f.write(header)
+            f.write(vert_data)
+            f.write(face_data)
+            f.flush()
+            mesh = io.load_mesh(f.name)
+
+        self.assertClose(mesh.faces_padded(), torch.arange(3)[None, None])
+        self.assertClose(
+            mesh.verts_padded(),
+            (torch.arange(3) + 9.0 * torch.arange(3)[:, None])[None],
+        )
+
     def test_save_pointcloud(self):
         header = "\n".join(
             [
@@ -528,12 +567,16 @@ class TestMeshPlyIO(TestCaseMixin, unittest.TestCase):
         ).encode("ascii")
         data = struct.pack("<" + "f" * 48, *range(48))
         points = torch.FloatTensor([0, 1, 2]) + 6 * torch.arange(8)[:, None]
-        features = torch.FloatTensor([3, 4, 5]) + 6 * torch.arange(8)[:, None]
+        features_large = torch.FloatTensor([3, 4, 5]) + 6 * torch.arange(8)[:, None]
+        features = features_large / 255.0
+        pointcloud_largefeatures = Pointclouds(
+            points=[points], features=[features_large]
+        )
         pointcloud = Pointclouds(points=[points], features=[features])
 
         io = IO()
         with NamedTemporaryFile(mode="rb", suffix=".ply") as f:
-            io.save_pointcloud(data=pointcloud, path=f.name)
+            io.save_pointcloud(data=pointcloud_largefeatures, path=f.name)
             f.flush()
             f.seek(0)
             actual_data = f.read()
@@ -541,15 +584,52 @@ class TestMeshPlyIO(TestCaseMixin, unittest.TestCase):
 
         self.assertEqual(header + data, actual_data)
         self.assertClose(reloaded_pointcloud.points_list()[0], points)
-        self.assertClose(reloaded_pointcloud.features_list()[0], features)
+        self.assertClose(reloaded_pointcloud.features_list()[0], features_large)
+        # Test the load-save cycle leaves file completely unchanged
+        with NamedTemporaryFile(mode="rb", suffix=".ply") as f:
+            io.save_pointcloud(
+                data=reloaded_pointcloud,
+                path=f.name,
+            )
+            f.flush()
+            f.seek(0)
+            data2 = f.read()
+            self.assertEqual(data2, actual_data)
 
         with NamedTemporaryFile(mode="r", suffix=".ply") as f:
-            io.save_pointcloud(data=pointcloud, path=f.name, binary=False)
+            io.save_pointcloud(
+                data=pointcloud, path=f.name, binary=False, decimal_places=9
+            )
             reloaded_pointcloud2 = io.load_pointcloud(f.name)
             self.assertEqual(f.readline(), "ply\n")
             self.assertEqual(f.readline(), "format ascii 1.0\n")
         self.assertClose(reloaded_pointcloud2.points_list()[0], points)
         self.assertClose(reloaded_pointcloud2.features_list()[0], features)
+
+        for binary in [True, False]:
+            with NamedTemporaryFile(mode="rb", suffix=".ply") as f:
+                io.save_pointcloud(
+                    data=pointcloud, path=f.name, colors_as_uint8=True, binary=binary
+                )
+                f.flush()
+                f.seek(0)
+                actual_data = f.read()
+                reloaded_pointcloud3 = io.load_pointcloud(f.name)
+            self.assertClose(reloaded_pointcloud3.features_list()[0], features)
+            self.assertIn(b"property uchar green", actual_data)
+
+            # Test the load-save cycle leaves file completely unchanged
+            with NamedTemporaryFile(mode="rb", suffix=".ply") as f:
+                io.save_pointcloud(
+                    data=reloaded_pointcloud3,
+                    path=f.name,
+                    binary=binary,
+                    colors_as_uint8=True,
+                )
+                f.flush()
+                f.seek(0)
+                data2 = f.read()
+                self.assertEqual(data2, actual_data)
 
     def test_load_pointcloud_bad_order(self):
         """

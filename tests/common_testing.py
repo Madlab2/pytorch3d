@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -6,6 +6,7 @@
 
 import os
 import unittest
+from numbers import Real
 from pathlib import Path
 from typing import Callable, Optional, Union
 
@@ -25,10 +26,12 @@ def get_pytorch3d_dir() -> Path:
     """
     Returns Path for the root PyTorch3D directory.
 
-    Facebook internal systems need a special case here.
+    Meta internal systems need a special case here.
     """
     if os.environ.get("INSIDE_RE_WORKER") is not None:
         return Path(__file__).resolve().parent
+    elif os.environ.get("CONDA_BUILD_STATE", "") == "TEST":
+        return Path(os.environ["SRC_DIR"])
     else:
         return Path(__file__).resolve().parent.parent
 
@@ -161,8 +164,17 @@ class TestCaseMixin(unittest.TestCase):
         if close:
             return
 
-        diff = backend.abs(input + 0.0 - other)
-        ratio = diff / backend.abs(other)
+        # handle bool case
+        if backend == torch and input.dtype == torch.bool:
+            diff = (input != other).float()
+            ratio = diff
+        if backend == np and input.dtype == bool:
+            diff = (input != other).astype(float)
+            ratio = diff
+        else:
+            diff = backend.abs(input + 0.0 - other)
+            ratio = diff / backend.abs(other)
+
         try_relative = (diff <= atol) | (backend.isfinite(ratio) & (ratio > 0))
         if try_relative.all():
             if backend == np:
@@ -179,3 +191,23 @@ class TestCaseMixin(unittest.TestCase):
         if msg is not None:
             self.fail(f"{msg} {err}")
         self.fail(err)
+
+    def assertConstant(
+        self, input: TensorOrArray, value: Real, *, atol: float = 0
+    ) -> None:
+        """
+        Asserts input is entirely filled with value.
+
+        Args:
+            input: tensor or array
+            value: expected value
+            atol: tolerance
+        """
+        mn, mx = input.min(), input.max()
+        msg = f"values in range [{mn}, {mx}], not {value}, shape {input.shape}"
+        if atol == 0:
+            self.assertEqual(input.min(), value, msg=msg)
+            self.assertEqual(input.max(), value, msg=msg)
+        else:
+            self.assertGreater(input.min(), value - atol, msg=msg)
+            self.assertLess(input.max(), value + atol, msg=msg)

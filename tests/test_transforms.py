@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -10,6 +10,7 @@ import unittest
 
 import torch
 from common_testing import TestCaseMixin
+from pytorch3d.transforms import random_rotations
 from pytorch3d.transforms.so3 import so3_exp_map
 from pytorch3d.transforms.transform3d import (
     Rotate,
@@ -21,6 +22,9 @@ from pytorch3d.transforms.transform3d import (
 
 
 class TestTransform(TestCaseMixin, unittest.TestCase):
+    def setUp(self) -> None:
+        torch.manual_seed(42)
+
     def test_to(self):
         tr = Translate(torch.FloatTensor([[1.0, 2.0, 3.0]]))
         R = torch.FloatTensor([[0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]])
@@ -50,9 +54,9 @@ class TestTransform(TestCaseMixin, unittest.TestCase):
         self.assertEqual(torch.float32, t.dtype)
         self.assertIsNot(t, cpu_t)
 
-        cuda_device = torch.device("cuda")
+        cuda_device = torch.device("cuda:0")
 
-        cuda_t = t.to("cuda")
+        cuda_t = t.to("cuda:0")
         self.assertEqual(cuda_device, cuda_t.device)
         self.assertEqual(cpu_device, t.device)
         self.assertEqual(torch.float32, cuda_t.dtype)
@@ -82,6 +86,36 @@ class TestTransform(TestCaseMixin, unittest.TestCase):
             t.transform_points(cuda_points)
             t = t.cuda()
             t = t.cpu()
+
+    def test_dtype_propagation(self):
+        """
+        Check that a given dtype is correctly passed along to child
+        transformations.
+        """
+        # Use at least two dtypes so we avoid only testing on the
+        # default dtype.
+        for dtype in [torch.float32, torch.float64]:
+            R = torch.tensor(
+                [[0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]],
+                dtype=dtype,
+            )
+            tf = (
+                Transform3d(dtype=dtype)
+                .rotate(R)
+                .rotate_axis_angle(
+                    R[0],
+                    "X",
+                )
+                .translate(3, 2, 1)
+                .scale(0.5)
+            )
+
+            self.assertEqual(tf.dtype, dtype)
+            for inner_tf in tf._transforms:
+                self.assertEqual(inner_tf.dtype, dtype)
+
+            transformed = tf.transform_points(R)
+            self.assertEqual(transformed.dtype, dtype)
 
     def test_clone(self):
         """
@@ -215,8 +249,8 @@ class TestTransform(TestCaseMixin, unittest.TestCase):
         normals_out_expected = torch.tensor(
             [[0.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0]]
         ).view(1, 3, 3)
-        self.assertTrue(torch.allclose(points_out, points_out_expected))
-        self.assertTrue(torch.allclose(normals_out, normals_out_expected))
+        self.assertTrue(torch.allclose(points_out, points_out_expected, atol=1e-7))
+        self.assertTrue(torch.allclose(normals_out, normals_out_expected, atol=1e-7))
 
     def test_transform_points_fail(self):
         t1 = Scale(0.1, 0.1, 0.1)
@@ -405,6 +439,28 @@ class TestTransform(TestCaseMixin, unittest.TestCase):
         ):
             with self.assertRaises(IndexError):
                 t3d_selected = t3d[invalid_index]
+
+    def test_stack(self):
+        rotations = random_rotations(3)
+        transform3 = Transform3d().rotate(rotations).translate(torch.full((3, 3), 0.3))
+        transform1 = Scale(37)
+        transform4 = transform1.stack(transform3)
+        self.assertEqual(len(transform1), 1)
+        self.assertEqual(len(transform3), 3)
+        self.assertEqual(len(transform4), 4)
+        self.assertClose(
+            transform4.get_matrix(),
+            torch.cat([transform1.get_matrix(), transform3.get_matrix()]),
+        )
+        points = torch.rand(4, 5, 3)
+        new_points_expect = torch.cat(
+            [
+                transform1.transform_points(points[:1]),
+                transform3.transform_points(points[1:]),
+            ]
+        )
+        new_points = transform4.transform_points(points)
+        self.assertClose(new_points, new_points_expect)
 
 
 class TestTranslate(unittest.TestCase):
@@ -925,7 +981,7 @@ class TestRotateAxisAngle(unittest.TestCase):
         self.assertTrue(
             torch.allclose(transformed_points.squeeze(), expected_points, atol=1e-7)
         )
-        self.assertTrue(torch.allclose(t._matrix, matrix))
+        self.assertTrue(torch.allclose(t._matrix, matrix, atol=1e-7))
 
     def test_rotate_x_torch_scalar(self):
         angle = torch.tensor(90.0)

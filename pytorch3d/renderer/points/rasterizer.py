@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
-
+from dataclasses import dataclass
 from typing import NamedTuple, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
+from pytorch3d.structures import Pointclouds
 
 from .rasterize_points import rasterize_points
 
@@ -21,29 +22,35 @@ class PointFragments(NamedTuple):
     dists: torch.Tensor
 
 
-# Class to store the point rasterization params with defaults
+@dataclass
 class PointsRasterizationSettings:
-    __slots__ = [
-        "image_size",
-        "radius",
-        "points_per_pixel",
-        "bin_size",
-        "max_points_per_bin",
-    ]
+    """
+    Class to store the point rasterization params with defaults
 
-    def __init__(
-        self,
-        image_size: Union[int, Tuple[int, int]] = 256,
-        radius: Union[float, torch.Tensor] = 0.01,
-        points_per_pixel: int = 8,
-        bin_size: Optional[int] = None,
-        max_points_per_bin: Optional[int] = None,
-    ) -> None:
-        self.image_size = image_size
-        self.radius = radius
-        self.points_per_pixel = points_per_pixel
-        self.bin_size = bin_size
-        self.max_points_per_bin = max_points_per_bin
+    Members:
+        image_size: Either common height and width or (height, width), in pixels.
+        radius: The radius (in NDC units) of each disk to be rasterized.
+            This can either be a float in which case the same radius is used
+            for each point, or a torch.Tensor of shape (N, P) giving a radius
+            per point in the batch.
+        points_per_pixel: (int) Number of points to keep track of per pixel.
+            We return the nearest points_per_pixel points along the z-axis.
+        bin_size: Size of bins to use for coarse-to-fine rasterization. Setting
+            bin_size=0 uses naive rasterization; setting bin_size=None attempts
+            to set it heuristically based on the shape of the input. This should
+            not affect the output, but can affect the speed of the forward pass.
+        max_points_per_bin: Only applicable when using coarse-to-fine
+            rasterization (bin_size != 0); this is the maximum number of points
+            allowed within each bin. This should not affect the output values,
+            but can affect the memory usage in the forward pass.
+            Setting max_points_per_bin=None attempts to set with a heuristic.
+    """
+
+    image_size: Union[int, Tuple[int, int]] = 256
+    radius: Union[float, torch.Tensor] = 0.01
+    points_per_pixel: int = 8
+    bin_size: Optional[int] = None
+    max_points_per_bin: Optional[int] = None
 
 
 class PointsRasterizer(nn.Module):
@@ -55,8 +62,7 @@ class PointsRasterizer(nn.Module):
         """
         cameras: A cameras object which has a  `transform_points` method
                 which returns the transformed points after applying the
-                world-to-view and view-to-screen
-                transformations.
+                world-to-view and view-to-ndc transformations.
             raster_settings: the parameters for rasterization. This should be a
                 named tuple.
 
@@ -70,14 +76,14 @@ class PointsRasterizer(nn.Module):
         self.cameras = cameras
         self.raster_settings = raster_settings
 
-    def transform(self, point_clouds, **kwargs) -> torch.Tensor:
+    def transform(self, point_clouds, **kwargs) -> Pointclouds:
         """
         Args:
             point_clouds: a set of point clouds
 
         Returns:
-            points_screen: the points with the vertex positions in screen
-            space
+            points_proj: the points with positions projected
+            in NDC space
 
         NOTE: keeping this as a separate function for readability but it could
         be moved into forward.
@@ -93,19 +99,25 @@ class PointsRasterizer(nn.Module):
         # TODO: Remove this line when the convention for the z coordinate in
         # the rasterizer is decided. i.e. retain z in view space or transform
         # to a different range.
+        eps = kwargs.get("eps", None)
         pts_view = cameras.get_world_to_view_transform(**kwargs).transform_points(
-            pts_world
+            pts_world, eps=eps
         )
-        pts_screen = cameras.get_projection_transform(**kwargs).transform_points(
-            pts_view
+        # view to NDC transform
+        to_ndc_transform = cameras.get_ndc_camera_transform(**kwargs)
+        projection_transform = cameras.get_projection_transform(**kwargs).compose(
+            to_ndc_transform
         )
-        pts_screen[..., 2] = pts_view[..., 2]
-        point_clouds = point_clouds.update_padded(pts_screen)
+        pts_ndc = projection_transform.transform_points(pts_view, eps=eps)
+
+        pts_ndc[..., 2] = pts_view[..., 2]
+        point_clouds = point_clouds.update_padded(pts_ndc)
         return point_clouds
 
     def to(self, device):
         # Manually move to device cameras as it is not a subclass of nn.Module
-        self.cameras = self.cameras.to(device)
+        if self.cameras is not None:
+            self.cameras = self.cameras.to(device)
         return self
 
     def forward(self, point_clouds, **kwargs) -> PointFragments:
@@ -115,10 +127,10 @@ class PointsRasterizer(nn.Module):
         Returns:
             PointFragments: Rasterization outputs as a named tuple.
         """
-        points_screen = self.transform(point_clouds, **kwargs)
+        points_proj = self.transform(point_clouds, **kwargs)
         raster_settings = kwargs.get("raster_settings", self.raster_settings)
         idx, zbuf, dists2 = rasterize_points(
-            points_screen,
+            points_proj,
             image_size=raster_settings.image_size,
             radius=raster_settings.radius,
             points_per_pixel=raster_settings.points_per_pixel,

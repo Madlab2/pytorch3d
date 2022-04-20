@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -16,8 +16,22 @@ from pytorch3d import _C
 # NOTE: All blending function should return an RGBA image per batch element
 
 
-# Data class to store blending params with defaults
 class BlendParams(NamedTuple):
+    """
+    Data class to store blending params with defaults
+
+    Members:
+        sigma (float): Controls the width of the sigmoid function used to
+            calculate the 2D distance based probability. Determines the
+            sharpness of the edges of the shape.
+            Higher => faces have less defined edges.
+        gamma (float): Controls the scaling of the exponential function used
+            to set the opacity of the color.
+            Higher => faces are more transparent.
+        background_color: RGB values for the background color as a tuple or
+            as a tensor of three floats.
+    """
+
     sigma: float = 1e-4
     gamma: float = 1e-4
     background_color: Union[torch.Tensor, Sequence[float]] = (1.0, 1.0, 1.0)
@@ -53,7 +67,7 @@ def hard_rgb_blend(
     if isinstance(background_color_, torch.Tensor):
         background_color = background_color_.to(device)
     else:
-        background_color = colors.new_tensor(background_color_)  # pyre-fixme[16]
+        background_color = colors.new_tensor(background_color_)
 
     # Find out how much background_color needs to be expanded to be used for masked_scatter.
     num_background_pixels = is_background.sum()
@@ -200,16 +214,16 @@ def softmax_rgb_blend(
         # pyre-fixme[16]
         zfar = zfar[:, None, None, None]
     if torch.is_tensor(znear):
+        # pyre-fixme[16]: Item `float` of `Union[float, Tensor]` has no attribute
+        #  `__getitem__`.
         znear = znear[:, None, None, None]
 
     z_inv = (zfar - fragments.zbuf) / (zfar - znear) * mask
-    # pyre-fixme[16]: `Tuple` has no attribute `values`.
     z_inv_max = torch.max(z_inv, dim=-1).values[..., None].clamp(min=eps)
     weights_num = prob_map * torch.exp((z_inv - z_inv_max) / blend_params.gamma)
 
     # Also apply exp normalize trick for the background color weight.
     # Clamp to ensure delta is never 0.
-    # pyre-fixme[20]: Argument `max` expected.
     # pyre-fixme[6]: Expected `Tensor` for 1st param but got `float`.
     delta = torch.exp((eps - z_inv_max) / blend_params.gamma).clamp(min=eps)
 

@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -7,14 +7,14 @@
 import contextlib
 import pathlib
 import warnings
-from typing import IO, ContextManager, Optional, Union
+from typing import ContextManager, IO, Optional, Union
 
 import numpy as np
 import torch
 from iopath.common.file_io import PathManager
 from PIL import Image
 
-from ..common.types import Device
+from ..common.datatypes import Device
 
 
 @contextlib.contextmanager
@@ -28,7 +28,7 @@ def nullcontext(x):
 PathOrStr = Union[pathlib.Path, str]
 
 
-def _open_file(f, path_manager: PathManager, mode="r") -> ContextManager[IO]:
+def _open_file(f, path_manager: PathManager, mode: str = "r") -> ContextManager[IO]:
     if isinstance(f, str):
         f = path_manager.open(f, mode)
         return contextlib.closing(f)
