@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  * All rights reserved.
  *
  * This source code is licensed under the BSD-style license found in the
@@ -15,7 +15,8 @@ std::tuple<at::Tensor, at::Tensor> KNearestNeighborIdxCpu(
     const at::Tensor& p2,
     const at::Tensor& lengths1,
     const at::Tensor& lengths2,
-    int K) {
+    const int norm,
+    const int K) {
   const int N = p1.size(0);
   const int P1 = p1.size(1);
   const int D = p1.size(2);
@@ -41,7 +42,11 @@ std::tuple<at::Tensor, at::Tensor> KNearestNeighborIdxCpu(
         float dist = 0;
         for (int d = 0; d < D; ++d) {
           float diff = p1_a[n][i1][d] - p2_a[n][i2][d];
-          dist += diff * diff;
+          if (norm == 1) {
+            dist += abs(diff);
+          } else { // norm is 2 (default)
+            dist += diff * diff;
+          }
         }
         int size = static_cast<int>(q.size());
         if (size < K || dist < std::get<0>(q.top())) {
@@ -73,6 +78,7 @@ std::tuple<at::Tensor, at::Tensor> KNearestNeighborBackwardCpu(
     const at::Tensor& lengths1,
     const at::Tensor& lengths2,
     const at::Tensor& idxs,
+    const int norm,
     const at::Tensor& grad_dists) {
   const int N = p1.size(0);
   const int P1 = p1.size(1);
@@ -99,9 +105,19 @@ std::tuple<at::Tensor, at::Tensor> KNearestNeighborBackwardCpu(
     for (int64_t i1 = 0; i1 < length1; ++i1) {
       for (int64_t k = 0; k < length2; ++k) {
         const int64_t i2 = idxs_a[n][i1][k];
+        // If the index is the pad value of -1 then ignore it
+        if (i2 == -1) {
+          continue;
+        }
         for (int64_t d = 0; d < D; ++d) {
-          const float diff =
-              2.0f * grad_dists_a[n][i1][k] * (p1_a[n][i1][d] - p2_a[n][i2][d]);
+          float diff = 0.0;
+          if (norm == 1) {
+            float sign = (p1_a[n][i1][d] > p2_a[n][i2][d]) ? 1.0 : -1.0;
+            diff = grad_dists_a[n][i1][k] * sign;
+          } else { // norm is 2 (default)
+            diff = 2.0f * grad_dists_a[n][i1][k] *
+                (p1_a[n][i1][d] - p2_a[n][i2][d]);
+          }
           grad_p1_a[n][i1][d] += diff;
           grad_p2_a[n][i2][d] += -1.0f * diff;
         }

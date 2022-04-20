@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -14,7 +14,7 @@ from pytorch3d.structures.pointclouds import Pointclouds
 
 def _validate_chamfer_reduction_inputs(
     batch_reduction: Union[str, None], point_reduction: str
-):
+) -> None:
     """Check the requested reductions are valid.
 
     Args:
@@ -79,6 +79,7 @@ def chamfer_distance(
     point_reduction: str = "mean",
     point_weights=None,
     oriented_cosine_similarity=False,
+    norm: int = 2,
 ):
     """
     Chamfer distance between two pointclouds x and y.
@@ -93,7 +94,7 @@ def chamfer_distance(
         x_lengths: Optional LongTensor of shape (N,) giving the number of points in each
             cloud in x.
         y_lengths: Optional LongTensor of shape (N,) giving the number of points in each
-            cloud in x.
+            cloud in y.
         x_normals: Optional FloatTensor of shape (N, P1, D).
         y_normals: Optional FloatTensor of shape (N, P2, D).
         batch_weights: Optional FloatTensor of shape (N,) giving weights for
@@ -106,6 +107,7 @@ def chamfer_distance(
         points in y.
         oriented_cosine: If set to True and x_normals and y_normals are not
         None, the cosine similarity considers the orientation of normals.
+        norm: int indicates the norm used for the distance. Supports 1 for L1 and 2 for L2.
 
     Returns:
         2-element tuple containing
@@ -117,6 +119,9 @@ def chamfer_distance(
           x_normals and y_normals are None.
     """
     _validate_chamfer_reduction_inputs(batch_reduction, point_reduction)
+
+    if not ((norm == 1) or (norm == 2)):
+        raise ValueError("Support for 1 or 2 norm.")
 
     x, x_lengths, x_normals = _handle_pointcloud_input(x, x_lengths, x_normals)
     y, y_lengths, y_normals = _handle_pointcloud_input(y, y_lengths, y_normals)
@@ -155,8 +160,8 @@ def chamfer_distance(
     cham_norm_x = x.new_zeros(())
     cham_norm_y = x.new_zeros(())
 
-    x_nn = knn_points(x, y, lengths1=x_lengths, lengths2=y_lengths, K=1)
-    y_nn = knn_points(y, x, lengths1=y_lengths, lengths2=x_lengths, K=1)
+    x_nn = knn_points(x, y, lengths1=x_lengths, lengths2=y_lengths, norm=norm, K=1)
+    y_nn = knn_points(y, x, lengths1=y_lengths, lengths2=x_lengths, norm=norm, K=1)
 
     cham_x = x_nn.dists[..., 0]  # (N, P1)
     cham_y = y_nn.dists[..., 0]  # (N, P2)

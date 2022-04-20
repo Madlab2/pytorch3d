@@ -1,5 +1,5 @@
 /**
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  * All rights reserved.
  *
  * This source code is licensed under the BSD-style license found in the
@@ -74,6 +74,20 @@ class HomeSplash extends React.Component {
   }
 }
 
+function SocialBanner() {
+  return (
+    <div className="socialBanner">
+      <div>
+        Support Ukraine 🇺🇦{' '}
+        <a href="https://opensource.fb.com/support-ukraine">
+          Help Provide Humanitarian Aid to Ukraine
+        </a>
+        .
+      </div>
+    </div>
+  );
+}
+
 class Index extends React.Component {
   render() {
     const {config: siteConfig, language = ''} = this.props;
@@ -135,7 +149,7 @@ loss_chamfer, _ = chamfer_distance(sample_sphere, sample_test)
         <Container>
           <ol>
             <li>
-              <strong>Install PyTorch3D  </strong> (following the instructions <a href="https://github.com/facebookresearch/pytorch3d/blob/master/INSTALL.md">here</a>)
+              <strong>Install PyTorch3D  </strong> (following the instructions <a href="https://github.com/facebookresearch/pytorch3d/blob/main/INSTALL.md">here</a>)
             </li>
             <li>
               <strong>Try a few 3D operators  </strong>
@@ -212,6 +226,7 @@ loss_chamfer, _ = chamfer_distance(sample_sphere, sample_test)
 
     return (
       <div>
+        <SocialBanner />
         <HomeSplash siteConfig={siteConfig} language={language} />
         <div className="landingPage mainContainer">
           <Features />

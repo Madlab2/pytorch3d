@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -8,9 +8,10 @@ import copy
 from typing import List, Optional, Tuple, Union
 
 import torch
+from pytorch3d.common.compat import meshgrid_ij
+from pytorch3d.common.datatypes import Device, make_device
+from pytorch3d.transforms import Scale, Transform3d
 
-from ..common.types import Device, make_device
-from ..transforms import Scale, Transform3d
 from . import utils as struct_utils
 
 
@@ -124,7 +125,7 @@ class Volumes:
     appropriate `world_coordinates` argument.
 
     Internally, the mapping between `x_local` and `x_world` is represented
-    as a `Transform3D` object `Volumes._local_to_world_transform`.
+    as a `Transform3d` object `Volumes._local_to_world_transform`.
     Users can access the relevant transformations with the
     `Volumes.get_world_to_local_coords_transform()` and
     `Volumes.get_local_to_world_coords_transform()`
@@ -260,7 +261,7 @@ class Volumes:
     ) -> Transform3d:
         """
         Converts the `voxel_size` and `volume_translation` constructor arguments
-        to the internal `Transform3D` object `local_to_world_transform`.
+        to the internal `Transform3d` object `local_to_world_transform`.
         """
         volume_size_zyx = self.get_grid_sizes().float()
         volume_size_xyz = volume_size_zyx[:, [2, 1, 0]]
@@ -393,7 +394,7 @@ class Volumes:
         ]
 
         # generate per-coord meshgrids
-        Z, Y, X = torch.meshgrid(vol_axes)
+        Z, Y, X = meshgrid_ij(vol_axes)
 
         # stack the coord grids ... this order matches the coordinate convention
         # of torch.nn.grid_sample

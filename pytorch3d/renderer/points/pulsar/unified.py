@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 
-from ....transforms import matrix_to_rotation_6d
+from ...camera_conversions import _pulsar_from_cameras_projection
 from ...cameras import (
     FoVOrthographicCameras,
     FoVPerspectiveCameras,
@@ -102,7 +102,7 @@ class PulsarPointsRenderer(nn.Module):
             height=height,
             max_num_balls=max_num_spheres,
             orthogonal_projection=orthogonal_projection,
-            right_handed_system=True,
+            right_handed_system=False,
             n_channels=n_channels,
             **kwargs,
         )
@@ -143,41 +143,30 @@ class PulsarPointsRenderer(nn.Module):
                 "The camera type can not be changed after renderer initialization! "
                 "Current camera orthogonal: %r. Original orthogonal: %r."
             ) % (orthogonal_projection, self.renderer._renderer.orthogonal)
-        if (
-            isinstance(self.rasterizer.raster_settings.image_size, tuple)
-            and self.rasterizer.raster_settings.image_size[0]
-            != self.renderer._renderer.width
-        ) or (
-            not isinstance(self.rasterizer.raster_settings.image_size, tuple)
-            and self.rasterizer.raster_settings.image_size
-            != self.renderer._renderer.width
-        ):
+        image_size = self.rasterizer.raster_settings.image_size
+        if isinstance(image_size, tuple):
+            expected_height, expected_width = image_size
+        else:
+            expected_height = expected_width = image_size
+        if expected_width != self.renderer._renderer.width:
             raise ValueError(
                 (
-                    "The rasterizer width and height can not be changed after renderer "
-                    "initialization! Current width: %d. Original width: %d."
+                    "The rasterizer width can not be changed after renderer "
+                    "initialization! Current width: %s. Original width: %d."
                 )
                 % (
-                    self.rasterizer.raster_settings.image_size,
+                    expected_width,
                     self.renderer._renderer.width,
                 )
             )
-        if (
-            isinstance(self.rasterizer.raster_settings.image_size, tuple)
-            and self.rasterizer.raster_settings.image_size[1]
-            != self.renderer._renderer.height
-        ) or (
-            not isinstance(self.rasterizer.raster_settings.image_size, tuple)
-            and self.rasterizer.raster_settings.image_size
-            != self.renderer._renderer.height
-        ):
+        if expected_height != self.renderer._renderer.height:
             raise ValueError(
                 (
-                    "The rasterizer width and height can not be changed after renderer "
-                    "initialization! Current height: %d. Original height: %d."
+                    "The rasterizer height can not be changed after renderer "
+                    "initialization! Current height: %s. Original height: %d."
                 )
                 % (
-                    self.rasterizer.raster_settings.image_size,
+                    expected_height,
                     self.renderer._renderer.height,
                 )
             )
@@ -359,24 +348,28 @@ class PulsarPointsRenderer(nn.Module):
     def _extract_extrinsics(
         self, kwargs, cloud_idx
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Extract the extrinsic information from the kwargs for a specific point cloud.
+
+        Instead of implementing a direct translation from the PyTorch3D to the Pulsar
+        camera model, we chain the two conversions of PyTorch3D->OpenCV and
+        OpenCV->Pulsar for better maintainability (PyTorch3D->OpenCV is maintained and
+        tested by the core PyTorch3D team, whereas OpenCV->Pulsar is maintained and
+        tested by the Pulsar team).
+        """
         # Shorthand:
         cameras = self.rasterizer.cameras
         R = kwargs.get("R", cameras.R)[cloud_idx]
         T = kwargs.get("T", cameras.T)[cloud_idx]
-        norm_mat = torch.tensor(
-            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, -1.0]],
-            dtype=torch.float32,
-            device=R.device,
+        tmp_cams = PerspectiveCameras(
+            R=R.unsqueeze(0), T=T.unsqueeze(0), device=R.device
         )
-        cam_rot = torch.matmul(norm_mat, R[:3, :3][None, ...]).permute((0, 2, 1))
-        norm_mat = torch.tensor(
-            [[-1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-            dtype=torch.float32,
-            device=R.device,
+        size_tensor = torch.tensor(
+            [[self.renderer._renderer.height, self.renderer._renderer.width]]
         )
-        cam_rot = torch.matmul(norm_mat, cam_rot)
-        cam_pos = torch.flatten(torch.matmul(cam_rot, T[..., None]))
-        cam_rot = torch.flatten(matrix_to_rotation_6d(cam_rot))
+        pulsar_cam = _pulsar_from_cameras_projection(tmp_cams, size_tensor)
+        cam_pos = pulsar_cam[0, :3]
+        cam_rot = pulsar_cam[0, 3:9]
         return cam_pos, cam_rot
 
     def _get_vert_rad(
@@ -556,6 +549,6 @@ class PulsarPointsRenderer(nn.Module):
                     max_depth=zfar,
                     min_depth=znear,
                     **otherargs,
-                )
+                ).flip(dims=[0])
             )
         return torch.stack(images, dim=0)

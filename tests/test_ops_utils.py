@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -76,3 +76,13 @@ class TestOpsUtils(TestCaseMixin, unittest.TestCase):
         mean = oputil.wmean(x, dim=(0, 1), weight=weight, keepdim=False)
         mean_gt = np.average(x_np, axis=(0, 1), weights=weight_np)
         self.assertClose(mean.cpu().data.numpy(), mean_gt)
+
+    def test_masked_gather_errors(self):
+        idx = torch.randint(0, 10, size=(5, 10, 4, 2))
+        points = torch.randn(size=(5, 10, 3))
+        with self.assertRaisesRegex(ValueError, "format is not supported"):
+            oputil.masked_gather(points, idx)
+
+        points = torch.randn(size=(2, 10, 3))
+        with self.assertRaisesRegex(ValueError, "same batch dimension"):
+            oputil.masked_gather(points, idx)

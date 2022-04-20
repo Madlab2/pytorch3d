@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -13,7 +13,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from iopath.common.file_io import PathManager
-from pytorch3d.common.types import Device
+from pytorch3d.common.compat import meshgrid_ij
+from pytorch3d.common.datatypes import Device
 from pytorch3d.io.utils import _open_file, _read_image
 
 
@@ -273,7 +274,7 @@ def make_material_atlas(
 
     # Meshgrid returns (row, column) i.e (Y, X)
     # Change order to (X, Y) to make the grid.
-    Y, X = torch.meshgrid(rng, rng)
+    Y, X = meshgrid_ij(rng, rng)
     # pyre-fixme[28]: Unexpected keyword argument `axis`.
     grid = torch.stack([X, Y], axis=-1)  # (R, R, 2)
 
@@ -299,7 +300,7 @@ def make_material_atlas(
 
     # bi-linearly interpolate the textures from the images
     # using the uv coordinates given by uv_pos.
-    textures = _bilinear_interpolation_vectorized(image, uv_pos)
+    textures = _bilinear_interpolation_grid_sample(image, uv_pos)
 
     return textures
 
@@ -311,11 +312,14 @@ def _bilinear_interpolation_vectorized(
     Bi linearly interpolate the image using the uv positions in the flow-field
     grid (following the naming conventions for torch.nn.functional.grid_sample).
 
-    This implementation uses the same steps as in the SoftRas cuda kernel
-    to make it easy to compare. This vectorized version requires less memory than
+    This implementation uses the same steps as in the SoftRasterizer CUDA kernel
+    for loading textures. We are keeping it for reference to make it easy to
+    compare if required.
+
+    However it doesn't properly handle the out of bound values in the same way as
+    the grid_sample function does with the padding_mode argument.
+    This vectorized version requires less memory than
     _bilinear_interpolation_grid_sample but is slightly slower.
-    If speed is an issue and the number of faces in the mesh and texture image sizes
-    are small, consider using _bilinear_interpolation_grid_sample instead.
 
     Args:
         image: FloatTensor of shape (H, W, D) a single image/input tensor with D
@@ -398,7 +402,7 @@ TextureImages = Dict[str, torch.Tensor]
 
 
 def _parse_mtl(
-    f, path_manager: PathManager, device: Device = "cpu"
+    f: str, path_manager: PathManager, device: Device = "cpu"
 ) -> Tuple[MaterialProperties, TextureFiles]:
     material_properties = {}
     texture_files = {}
@@ -451,12 +455,22 @@ def _load_texture_images(
     final_material_properties = {}
     texture_images = {}
 
+    used_material_names = list(material_names)
+    if not used_material_names and material_properties:
+        if len(material_properties) > 1:
+            raise ValueError(
+                "Multiple materials but no usemtl declarations in the obj file"
+            )
+        # No materials were specified in obj file and only one is in the
+        # specified .mtl file, so we use it.
+        used_material_names.append(next(iter(material_properties.keys())))
+
     # Only keep the materials referenced in the obj.
-    for material_name in material_names:
+    for material_name in used_material_names:
         if material_name in texture_files:
             # Load the texture image.
             path = os.path.join(data_dir, texture_files[material_name])
-            if os.path.isfile(path):
+            if path_manager.exists(path):
                 image = (
                     _read_image(path, path_manager=path_manager, format="RGB") / 255.0
                 )
@@ -475,7 +489,7 @@ def _load_texture_images(
 
 
 def load_mtl(
-    f,
+    f: str,
     *,
     material_names: List[str],
     data_dir: str,
@@ -487,7 +501,7 @@ def load_mtl(
     and specular light (Ka, Kd, Ks, Ns).
 
     Args:
-        f: a file-like object of the material information.
+        f: path to the material information.
         material_names: a list of the material names found in the .obj file.
         data_dir: the directory where the material texture files are located.
         device: Device (as str or torch.tensor) on which to return the new tensors.

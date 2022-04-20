@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -7,6 +7,7 @@
 from typing import Tuple
 
 import torch
+
 
 # ------------------------ Laplacian Matrices ------------------------ #
 # This file contains implementations of differentiable laplacian matrices.

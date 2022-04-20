@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  * All rights reserved.
  *
  * This source code is licensed under the BSD-style license found in the
@@ -10,6 +10,7 @@
 #include <torch/extension.h>
 #include <cstdio>
 #include <tuple>
+#include "rasterize_coarse/rasterize_coarse.h"
 #include "utils/pytorch3d_cutils.h"
 
 // ****************************************************************************
@@ -47,10 +48,10 @@ RasterizePointsNaiveCuda(
 //                          in the batch where N is the batch size.
 //  num_points_per_cloud: LongTensor of shape (N) giving the number of points
 //                        for each pointcloud in the batch.
-//  radius: FloatTensor of shape (P) giving the radius (in NDC units) of
-//          each point in points.
 //  image_size: Tuple (H, W) giving the size in pixels of the output
 //              image to be rasterized.
+//  radius: FloatTensor of shape (P) giving the radius (in NDC units) of
+//          each point in points.
 //  points_per_pixel: (K) The number closest of points to return for each pixel
 //
 // Returns:
@@ -104,6 +105,8 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> RasterizePointsNaive(
 // *                          COARSE RASTERIZATION                            *
 // ****************************************************************************
 
+// RasterizePointsCoarseCuda in rasterize_coarse/rasterize_coarse.h
+
 torch::Tensor RasterizePointsCoarseCpu(
     const torch::Tensor& points,
     const torch::Tensor& cloud_to_packed_first_idx,
@@ -113,16 +116,6 @@ torch::Tensor RasterizePointsCoarseCpu(
     const int bin_size,
     const int max_points_per_bin);
 
-#ifdef WITH_CUDA
-torch::Tensor RasterizePointsCoarseCuda(
-    const torch::Tensor& points,
-    const torch::Tensor& cloud_to_packed_first_idx,
-    const torch::Tensor& num_points_per_cloud,
-    const std::tuple<int, int> image_size,
-    const torch::Tensor& radius,
-    const int bin_size,
-    const int max_points_per_bin);
-#endif
 // Args:
 //  points: Tensor of shape (P, 3) giving (packed) positions for
 //          points in all N pointclouds in the batch where P is the total
@@ -133,11 +126,13 @@ torch::Tensor RasterizePointsCoarseCuda(
 //                          in the batch where N is the batch size.
 //  num_points_per_cloud: LongTensor of shape (N) giving the number of points
 //                        for each pointcloud in the batch.
-//  radius: FloatTensor of shape (P) giving the radius (in NDC units) of
-//          each point in points.
 //  image_size: Tuple (H, W) giving the size in pixels of the output
 //              image to be rasterized.
+//  radius: FloatTensor of shape (P) giving the radius (in NDC units) of
+//          each point in points.
 //  bin_size: Size of each bin within the image (in pixels)
+//  max_points_per_bin: The maximum number of points allowed to fall into each
+//                      bin when using coarse-to-fine rasterization.
 //
 // Returns:
 //  points_per_bin: Tensor of shape (N, num_bins, num_bins) giving the number
@@ -310,10 +305,10 @@ torch::Tensor RasterizePointsBackward(
 //                          in the batch where N is the batch size.
 //  num_points_per_cloud: LongTensor of shape (N) giving the number of points
 //                        for each pointcloud in the batch.
-//  radius: FloatTensor of shape (P) giving the radius (in NDC units) of
-//          each point in points.
 //  image_size: Tuple (H, W) giving the size in pixels of the output
 //              image to be rasterized.
+//  radius: FloatTensor of shape (P) giving the radius (in NDC units) of
+//          each point in points.
 //  points_per_pixel: (K) The number of points to return for each pixel
 //  bin_size: Bin size (in pixels) for coarse-to-fine rasterization. Setting
 //            bin_size=0 uses naive rasterization instead.

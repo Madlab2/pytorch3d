@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -8,7 +8,8 @@ import math
 from typing import Tuple
 
 import torch
-from pytorch3d.renderer import PerspectiveCameras, look_at_view_transform
+from pytorch3d.renderer import look_at_view_transform, PerspectiveCameras
+from torch.utils.data.dataset import Dataset
 
 
 def generate_eval_video_cameras(
@@ -18,7 +19,7 @@ def generate_eval_video_cameras(
     trajectory_scale: float = 0.2,
     scene_center: Tuple[float, float, float] = (0.0, 0.0, 0.0),
     up: Tuple[float, float, float] = (0.0, 0.0, 1.0),
-) -> dict:
+) -> Dataset[torch.Tensor]:
     """
     Generate a camera trajectory for visualizing a NeRF model.
 

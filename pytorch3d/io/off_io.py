@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -13,16 +13,16 @@ This format is introduced, for example, at
 http://www.geomview.org/docs/html/OFF.html .
 """
 import warnings
-from typing import Optional, Tuple, Union, cast
+from typing import cast, Optional, Tuple, Union
 
 import numpy as np
 import torch
 from iopath.common.file_io import PathManager
-from pytorch3d.io.utils import PathOrStr, _check_faces_indices, _open_file
+from pytorch3d.io.utils import _check_faces_indices, _open_file, PathOrStr
 from pytorch3d.renderer import TexturesAtlas, TexturesVertex
 from pytorch3d.structures import Meshes
 
-from .pluggable_formats import MeshFormatInterpreter, endswith
+from .pluggable_formats import endswith, MeshFormatInterpreter
 
 
 def _is_line_empty(line: Union[str, bytes]) -> bool:

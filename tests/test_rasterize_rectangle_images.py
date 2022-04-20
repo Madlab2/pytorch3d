@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -10,10 +10,10 @@ from itertools import product
 import numpy as np
 import torch
 from common_testing import (
-    TestCaseMixin,
     get_pytorch3d_dir,
     get_tests_dir,
     load_rgb_image,
+    TestCaseMixin,
 )
 from PIL import Image
 from pytorch3d.io import load_obj
@@ -322,7 +322,7 @@ class TestRasterizeRectangleImagesMeshes(TestCaseMixin, unittest.TestCase):
 
             # Finally check the gradients of the input vertices for
             # the square and non square case
-            self.assertClose(verts_square.grad, grad_tensor.grad, rtol=3e-4)
+            self.assertClose(verts_square.grad, grad_tensor.grad, rtol=3e-4, atol=5e-3)
 
     def test_gpu(self):
         """

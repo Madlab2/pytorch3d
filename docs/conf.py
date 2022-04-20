@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -82,11 +82,11 @@ for m in ["cv2", "scipy", "numpy", "pytorch3d._C", "np.eye", "np.zeros"]:
 # -- Project information -----------------------------------------------------
 
 project = "PyTorch3D"
-copyright = "2019, facebookresearch"
+copyright = "Meta Platforms, Inc"
 author = "facebookresearch"
 
 # The short X.Y version
-version = "0.2.0"
+version = ""
 
 # The full version, including alpha/beta/rc tags
 release = version
@@ -159,7 +159,7 @@ html_theme_options = {"collapse_navigation": True}
 def url_resolver(url):
     if ".html" not in url:
         url = url.replace("../", "")
-        return "https://github.com/facebookresearch/pytorch3d/blob/master/" + url
+        return "https://github.com/facebookresearch/pytorch3d/blob/main/" + url
     else:
         if DEPLOY:
             return "http://pytorch3d.readthedocs.io/" + url

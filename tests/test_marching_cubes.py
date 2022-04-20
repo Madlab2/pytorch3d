@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -9,7 +9,7 @@ import pickle
 import unittest
 
 import torch
-from common_testing import TestCaseMixin, get_tests_dir
+from common_testing import get_tests_dir, TestCaseMixin
 from pytorch3d.ops.marching_cubes import marching_cubes_naive
 
 
