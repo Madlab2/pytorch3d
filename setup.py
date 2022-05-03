@@ -147,12 +147,12 @@ setup(
         "dev": ["flake8", "isort", "black==19.3b0"],
         "implicitron": ["hydra-core>=1.1", "visdom", "lpips", "matplotlib"],
     },
-    entry_points={
-        "console_scripts": [
-            f"pytorch3d_implicitron_runner={trainer}.experiment",
-            f"pytorch3d_implicitron_visualizer={trainer}.visualize_reconstruction",
-        ]
-    },
+    # entry_points={
+        # "console_scripts": [
+            # f"pytorch3d_implicitron_runner={trainer}.experiment",
+            # f"pytorch3d_implicitron_visualizer={trainer}.visualize_reconstruction",
+        # ]
+    # },
     ext_modules=get_extensions(),
     cmdclass={"build_ext": BuildExtension},
     package_data={
