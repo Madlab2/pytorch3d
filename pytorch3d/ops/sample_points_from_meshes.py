@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -41,9 +41,10 @@ def sample_points_from_meshes(
         return_normals: If True, return normals for the sampled points.
         return_textures: If True, return textures for the sampled points.
         interpolate_features: If 'barycentric', use barycentric coordinates of
-        the sampled surface points to interpolate vertex features. If
-        'majority', use majority voting for the class of the sampled surface
-        points.
+            the sampled surface points to interpolate vertex features. If
+            'majority', use majority voting for the class of the sampled
+            surface points. If 'nearest', assign class of vertex with highest
+            barycentric weight to sampled vertex.
 
     Returns:
         4-element tuple containing
@@ -165,6 +166,16 @@ def sample_points_from_meshes(
         elif interpolate_features == 'majority':
             face_features_sampled = face_features[sample_face_idxs]
             sample_features = torch.mode(face_features_sampled, dim=2)[0]
+
+        elif interpolate_features == 'nearest':
+            face_features_sampled = face_features[sample_face_idxs]
+            # Nearest = highest barycentric weight
+            nearest_idx = torch.argmax(torch.stack([w0, w1, w2]), dim=0)
+            sample_features = torch.gather(
+                face_features_sampled.squeeze(-1),
+                2,
+                nearest_idx.unsqueeze(-1)
+            )
 
         else:
             raise ValueError("Unknown interpolation %s", interpolate_features)

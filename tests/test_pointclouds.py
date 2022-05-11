@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -12,7 +12,7 @@ import numpy as np
 import torch
 from common_testing import TestCaseMixin
 from pytorch3d.structures import utils as struct_utils
-from pytorch3d.structures.pointclouds import Pointclouds
+from pytorch3d.structures.pointclouds import join_pointclouds_as_batch, Pointclouds
 
 
 class TestPointclouds(TestCaseMixin, unittest.TestCase):
@@ -382,6 +382,43 @@ class TestPointclouds(TestCaseMixin, unittest.TestCase):
                             if with_features:
                                 self.assertTrue(features_padded[n, p:, :].eq(0).all())
                     self.assertTrue(points_per_cloud[n] == p)
+
+    def test_list_someempty(self):
+        # We want
+        #     point_cloud = Pointclouds(
+        #         [pcl.points_packed() for pcl in point_clouds],
+        #         features=[pcl.features_packed() for pcl in point_clouds],
+        #     )
+        # to work if point_clouds is a list of pointclouds with some empty and some not.
+        points_list = [torch.rand(30, 3), torch.zeros(0, 3)]
+        features_list = [torch.rand(30, 3), None]
+        pcls = Pointclouds(points=points_list, features=features_list)
+        self.assertEqual(len(pcls), 2)
+        self.assertClose(
+            pcls.points_padded(),
+            torch.stack([points_list[0], torch.zeros_like(points_list[0])]),
+        )
+        self.assertClose(pcls.points_packed(), points_list[0])
+        self.assertClose(
+            pcls.features_padded(),
+            torch.stack([features_list[0], torch.zeros_like(points_list[0])]),
+        )
+        self.assertClose(pcls.features_packed(), features_list[0])
+
+        points_list = [torch.zeros(0, 3), torch.rand(30, 3)]
+        features_list = [None, torch.rand(30, 3)]
+        pcls = Pointclouds(points=points_list, features=features_list)
+        self.assertEqual(len(pcls), 2)
+        self.assertClose(
+            pcls.points_padded(),
+            torch.stack([torch.zeros_like(points_list[1]), points_list[1]]),
+        )
+        self.assertClose(pcls.points_packed(), points_list[1])
+        self.assertClose(
+            pcls.features_padded(),
+            torch.stack([torch.zeros_like(points_list[1]), features_list[1]]),
+        )
+        self.assertClose(pcls.features_packed(), features_list[1])
 
     def test_clone_list(self):
         N = 5
@@ -976,7 +1013,9 @@ class TestPointclouds(TestCaseMixin, unittest.TestCase):
 
     def test_inside_box(self):
         def inside_box_naive(cloud, box_min, box_max):
-            return (cloud >= box_min.view(1, 3)) * (cloud <= box_max.view(1, 3))
+            return ((cloud >= box_min.view(1, 3)) * (cloud <= box_max.view(1, 3))).all(
+                dim=-1
+            )
 
         N, P, C = 5, 100, 4
 
@@ -994,7 +1033,7 @@ class TestPointclouds(TestCaseMixin, unittest.TestCase):
         for i, cloud in enumerate(clouds.points_list()):
             within_box_naive.append(inside_box_naive(cloud, box[i, 0], box[i, 1]))
         within_box_naive = torch.cat(within_box_naive, 0)
-        self.assertTrue(within_box.eq(within_box_naive).all())
+        self.assertTrue(torch.equal(within_box, within_box_naive))
 
         # box of shape 2x3
         box2 = box[0, :]
@@ -1005,13 +1044,12 @@ class TestPointclouds(TestCaseMixin, unittest.TestCase):
         for cloud in clouds.points_list():
             within_box_naive2.append(inside_box_naive(cloud, box2[0], box2[1]))
         within_box_naive2 = torch.cat(within_box_naive2, 0)
-        self.assertTrue(within_box2.eq(within_box_naive2).all())
-
+        self.assertTrue(torch.equal(within_box2, within_box_naive2))
         # box of shape 1x2x3
         box3 = box2.expand(1, 2, 3)
 
         within_box3 = clouds.inside_box(box3)
-        self.assertTrue(within_box2.eq(within_box3).all())
+        self.assertTrue(torch.equal(within_box2, within_box3))
 
         # invalid box
         invalid_box = torch.cat(
@@ -1056,6 +1094,109 @@ class TestPointclouds(TestCaseMixin, unittest.TestCase):
                     self.assertClose(
                         clouds.normals_packed(), torch.cat(normals_est_list, dim=0)
                     )
+
+    def test_subsample(self):
+        lengths = [4, 5, 13, 3]
+        points = [torch.rand(length, 3) for length in lengths]
+        features = [torch.rand(length, 5) for length in lengths]
+        normals = [torch.rand(length, 3) for length in lengths]
+
+        pcl1 = Pointclouds(points=points).cuda()
+        self.assertIs(pcl1, pcl1.subsample(13))
+        self.assertIs(pcl1, pcl1.subsample([6, 13, 13, 13]))
+
+        lengths_max_4 = torch.tensor([4, 4, 4, 3]).cuda()
+        for with_normals, with_features in itertools.product([True, False], repeat=2):
+            with self.subTest(f"{with_normals} {with_features}"):
+                pcl = Pointclouds(
+                    points=points,
+                    normals=normals if with_normals else None,
+                    features=features if with_features else None,
+                )
+                pcl_copy = pcl.subsample(max_points=4)
+                for length, points_ in zip(lengths_max_4, pcl_copy.points_list()):
+                    self.assertEqual(points_.shape, (length, 3))
+                if with_normals:
+                    for length, normals_ in zip(lengths_max_4, pcl_copy.normals_list()):
+                        self.assertEqual(normals_.shape, (length, 3))
+                else:
+                    self.assertIsNone(pcl_copy.normals_list())
+                if with_features:
+                    for length, features_ in zip(
+                        lengths_max_4, pcl_copy.features_list()
+                    ):
+                        self.assertEqual(features_.shape, (length, 5))
+                else:
+                    self.assertIsNone(pcl_copy.features_list())
+
+        pcl2 = Pointclouds(points=points)
+        pcl_copy2 = pcl2.subsample(lengths_max_4)
+        for length, points_ in zip(lengths_max_4, pcl_copy2.points_list()):
+            self.assertEqual(points_.shape, (length, 3))
+
+    def test_join_pointclouds_as_batch(self):
+        """
+        Test join_pointclouds_as_batch
+        """
+
+        def check_item(x, y):
+            self.assertEqual(x is None, y is None)
+            if x is not None:
+                self.assertClose(torch.cat([x, x, x]), y)
+
+        def check_triple(points, points3):
+            """
+            Verify that points3 is three copies of points.
+            """
+            check_item(points.points_padded(), points3.points_padded())
+            check_item(points.normals_padded(), points3.normals_padded())
+            check_item(points.features_padded(), points3.features_padded())
+
+        lengths = [4, 5, 13, 3]
+        points = [torch.rand(length, 3) for length in lengths]
+        features = [torch.rand(length, 5) for length in lengths]
+        normals = [torch.rand(length, 3) for length in lengths]
+
+        # Test with normals and features present
+        pcl = Pointclouds(points=points, features=features, normals=normals)
+        pcl3 = join_pointclouds_as_batch([pcl] * 3)
+        check_triple(pcl, pcl3)
+
+        # Test with normals and features present for tensor backed pointclouds
+        N, P, D = 5, 30, 4
+        pcl = Pointclouds(
+            points=torch.rand(N, P, 3),
+            features=torch.rand(N, P, D),
+            normals=torch.rand(N, P, 3),
+        )
+        pcl3 = join_pointclouds_as_batch([pcl] * 3)
+        check_triple(pcl, pcl3)
+
+        # Test without normals
+        pcl_nonormals = Pointclouds(points=points, features=features)
+        pcl3 = join_pointclouds_as_batch([pcl_nonormals] * 3)
+        check_triple(pcl_nonormals, pcl3)
+
+        # Test without features
+        pcl_nofeats = Pointclouds(points=points, normals=normals)
+        pcl3 = join_pointclouds_as_batch([pcl_nofeats] * 3)
+        check_triple(pcl_nofeats, pcl3)
+
+        # Check error raised if all pointclouds in the batch
+        # are not consistent in including normals/features
+        with self.assertRaisesRegex(ValueError, "some set to None"):
+            join_pointclouds_as_batch([pcl, pcl_nonormals, pcl_nonormals])
+        with self.assertRaisesRegex(ValueError, "some set to None"):
+            join_pointclouds_as_batch([pcl, pcl_nofeats, pcl_nofeats])
+
+        # Check error if first input is a single pointclouds object
+        # instead of a list
+        with self.assertRaisesRegex(ValueError, "Wrong first argument"):
+            join_pointclouds_as_batch(pcl)
+
+        # Check error if all pointclouds are not on the same device
+        with self.assertRaisesRegex(ValueError, "same device"):
+            join_pointclouds_as_batch([pcl, pcl.to("cuda:0")])
 
     @staticmethod
     def compute_packed_with_init(

@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -261,7 +261,7 @@ class SubdivideMeshes(nn.Module):
 
             # Calculate the indices needed to group the new and existing verts
             # for each mesh.
-            verts_sort_idx = create_verts_index(
+            verts_sort_idx = _create_verts_index(
                 num_verts_per_mesh, num_edges_per_mesh, meshes.device
             )  # (sum(V_n)+sum(E_n),)
 
@@ -282,7 +282,9 @@ class SubdivideMeshes(nn.Module):
 
             # Calculate the indices needed to group the existing and new faces
             # for each mesh.
-            face_sort_idx = create_faces_index(num_faces_per_mesh, device=meshes.device)
+            face_sort_idx = _create_faces_index(
+                num_faces_per_mesh, device=meshes.device
+            )
 
             # Reorder the faces to sequentially group existing and new faces
             # for each mesh.
@@ -329,7 +331,7 @@ class SubdivideMeshes(nn.Module):
             return new_meshes, new_feats
 
 
-def create_verts_index(verts_per_mesh, edges_per_mesh, device=None):
+def _create_verts_index(verts_per_mesh, edges_per_mesh, device=None):
     """
     Helper function to group the vertex indices for each mesh. New vertices are
     stacked at the end of the original verts tensor, so in order to have
@@ -400,7 +402,7 @@ def create_verts_index(verts_per_mesh, edges_per_mesh, device=None):
     return verts_idx
 
 
-def create_faces_index(faces_per_mesh, device=None):
+def _create_faces_index(faces_per_mesh: torch.Tensor, device=None):
     """
     Helper function to group the faces indices for each mesh. New faces are
     stacked at the end of the original faces tensor, so in order to have

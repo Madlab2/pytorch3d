@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -101,11 +101,6 @@ class TestAcosLinearExtrapolation(TestCaseMixin, unittest.TestCase):
         self._test_acos_outside_bounds(
             x[x_lower], y[x_lower], dacos_dx[x_lower], lower_bound
         )
-        if abs(upper_bound + lower_bound) <= 1e-5:  # lower_bound==-upper_bound
-            # check that passing bounds=upper_bound gives the same
-            # resut as bounds=[lower_bound, upper_bound]
-            y_one_bound = acos_linear_extrapolation(x, upper_bound)
-            self.assertClose(y_one_bound, y)
 
     def test_acos(self, batch_size: int = 10000):
         """

@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -10,9 +10,6 @@ from typing import Tuple
 import torch
 
 from ..transforms import acos_linear_extrapolation
-
-
-HAT_INV_SKEW_SYMMETRIC_TOL = 1e-5
 
 
 def so3_relative_angle(
@@ -104,7 +101,8 @@ def so3_rotation_angle(
         return phi_cos
     else:
         if cos_bound > 0.0:
-            return acos_linear_extrapolation(phi_cos, 1.0 - cos_bound)
+            bound = 1.0 - cos_bound
+            return acos_linear_extrapolation(phi_cos, (-bound, bound))
         else:
             return torch.acos(phi_cos)
 
@@ -250,6 +248,8 @@ def hat_inv(h: torch.Tensor) -> torch.Tensor:
         raise ValueError("Input has to be a batch of 3x3 Tensors.")
 
     ss_diff = torch.abs(h + h.permute(0, 2, 1)).max()
+
+    HAT_INV_SKEW_SYMMETRIC_TOL = 1e-5
     if float(ss_diff) > HAT_INV_SKEW_SYMMETRIC_TOL:
         raise ValueError("One of input matrices is not skew-symmetric.")
 

@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -8,7 +8,7 @@ import unittest
 
 import torch
 from common_testing import TestCaseMixin
-from pytorch3d.renderer.cameras import PerspectiveCameras, look_at_view_transform
+from pytorch3d.renderer.cameras import look_at_view_transform, PerspectiveCameras
 from pytorch3d.renderer.mesh.rasterizer import Fragments
 from pytorch3d.renderer.mesh.shader import (
     HardFlatShader,
@@ -22,7 +22,7 @@ from pytorch3d.structures.meshes import Meshes
 class TestShader(TestCaseMixin, unittest.TestCase):
     def test_to(self):
         cpu_device = torch.device("cpu")
-        cuda_device = torch.device("cuda")
+        cuda_device = torch.device("cuda:0")
 
         R, T = look_at_view_transform()
 

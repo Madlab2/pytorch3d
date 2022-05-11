@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -7,7 +7,7 @@
 import unittest
 
 import torch
-from common_testing import TestCaseMixin, get_random_cuda_device
+from common_testing import get_random_cuda_device, TestCaseMixin
 from pytorch3d.ops import packed_to_padded, padded_to_packed
 from pytorch3d.structures.meshes import Meshes
 

@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -42,18 +42,18 @@ from base64 import b64decode
 from collections import deque
 from enum import IntEnum
 from io import BytesIO
-from typing import Any, BinaryIO, Dict, List, Optional, Tuple, Union, cast
+from typing import Any, BinaryIO, cast, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
 from iopath.common.file_io import PathManager
 from PIL import Image
-from pytorch3d.io.utils import PathOrStr, _open_file
+from pytorch3d.io.utils import _open_file, PathOrStr
 from pytorch3d.renderer.mesh import TexturesBase, TexturesUV, TexturesVertex
-from pytorch3d.structures import Meshes, join_meshes_as_scene
-from pytorch3d.transforms import Transform3d, quaternion_to_matrix
+from pytorch3d.structures import join_meshes_as_scene, Meshes
+from pytorch3d.transforms import quaternion_to_matrix, Transform3d
 
-from .pluggable_formats import MeshFormatInterpreter, endswith
+from .pluggable_formats import endswith, MeshFormatInterpreter
 
 
 _GLTF_MAGIC = 0x46546C67
@@ -229,7 +229,6 @@ class _GLTFLoader:
         binary_data = self.get_binary_data(buffer_view["buffer"])
 
         bytesio = BytesIO(binary_data[offset : offset + length].tobytes())
-        # pyre-fixme[16]: `Image.Image` has no attribute `__enter__`.
         with Image.open(bytesio) as f:
             array = np.array(f)
             if array.dtype == np.uint8:

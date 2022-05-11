@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -15,19 +15,19 @@ from collections import namedtuple
 import numpy as np
 import torch
 from common_testing import (
-    TestCaseMixin,
     get_pytorch3d_dir,
     get_tests_dir,
     load_rgb_image,
+    TestCaseMixin,
 )
 from PIL import Image
 from pytorch3d.io import load_obj
 from pytorch3d.renderer.cameras import (
     FoVOrthographicCameras,
     FoVPerspectiveCameras,
+    look_at_view_transform,
     OrthographicCameras,
     PerspectiveCameras,
-    look_at_view_transform,
 )
 from pytorch3d.renderer.lighting import AmbientLights, PointLights
 from pytorch3d.renderer.materials import Materials
@@ -44,9 +44,9 @@ from pytorch3d.renderer.mesh.shader import (
     TexturedSoftPhongShader,
 )
 from pytorch3d.structures.meshes import (
-    Meshes,
     join_meshes_as_batch,
     join_meshes_as_scene,
+    Meshes,
 )
 from pytorch3d.utils.ico_sphere import ico_sphere
 from pytorch3d.utils.torus import torus
@@ -250,14 +250,16 @@ class TestRenderMeshes(TestCaseMixin, unittest.TestCase):
         raster_settings = RasterizationSettings(
             image_size=512, blur_radius=0.0, faces_per_pixel=1
         )
+        half_half = (512.0 / 2.0, 512.0 / 2.0)
         for cam_type in (PerspectiveCameras, OrthographicCameras):
             cameras = cam_type(
                 device=device,
                 R=R,
                 T=T,
-                principal_point=((256.0, 256.0),),
-                focal_length=((256.0, 256.0),),
+                principal_point=(half_half,),
+                focal_length=(half_half,),
                 image_size=((512, 512),),
+                in_ndc=False,
             )
             rasterizer = MeshRasterizer(
                 cameras=cameras, raster_settings=raster_settings
@@ -274,6 +276,10 @@ class TestRenderMeshes(TestCaseMixin, unittest.TestCase):
             images = renderer(sphere_mesh)
             rgb = images[0, ..., :3].squeeze().cpu()
             filename = "test_simple_sphere_light_phong_%s.png" % cam_type.__name__
+            if DEBUG:
+                Image.fromarray((rgb.numpy() * 255).astype(np.uint8)).save(
+                    DATA_DIR / f"{filename}_.png"
+                )
 
             image_ref = load_rgb_image(filename, DATA_DIR)
             self.assertClose(rgb, image_ref, atol=0.05)
@@ -742,7 +748,7 @@ class TestRenderMeshes(TestCaseMixin, unittest.TestCase):
                 Image.fromarray((output.numpy() * 255).astype(np.uint8)).save(
                     DATA_DIR / f"test_joinuvs{i}_final_.png"
                 )
-                Image.fromarray((output.numpy() * 255).astype(np.uint8)).save(
+                Image.fromarray((merged.numpy() * 255).astype(np.uint8)).save(
                     DATA_DIR / f"test_joinuvs{i}_merged.png"
                 )
 
@@ -771,9 +777,45 @@ class TestRenderMeshes(TestCaseMixin, unittest.TestCase):
                     )
                 ).save(DATA_DIR / f"test_joinuvs{i}_map3.png")
 
-            self.assertClose(output, merged, atol=0.015)
-            self.assertClose(output, image_ref, atol=0.05)
+            self.assertClose(output, merged)
+            self.assertClose(output, image_ref, atol=0.005)
             self.assertClose(mesh.textures.maps_padded()[0].cpu(), map_ref, atol=0.05)
+
+    def test_join_uvs_simple(self):
+        # Example from issue #826
+        a = TexturesUV(
+            maps=torch.full((1, 4000, 4000, 3), 0.8),
+            faces_uvs=torch.arange(300).reshape(1, 100, 3),
+            verts_uvs=torch.rand(1, 300, 2) * 0.4 + 0.1,
+        )
+        b = TexturesUV(
+            maps=torch.full((1, 2000, 2000, 3), 0.7),
+            faces_uvs=torch.arange(150).reshape(1, 50, 3),
+            verts_uvs=torch.rand(1, 150, 2) * 0.2 + 0.3,
+        )
+        self.assertEqual(a._num_faces_per_mesh, [100])
+        self.assertEqual(b._num_faces_per_mesh, [50])
+        c = a.join_batch([b]).join_scene()
+        self.assertEqual(a._num_faces_per_mesh, [100])
+        self.assertEqual(b._num_faces_per_mesh, [50])
+        self.assertEqual(c._num_faces_per_mesh, [150])
+
+        color = c.faces_verts_textures_packed()
+        color1 = color[:100, :, 0].flatten()
+        color2 = color[100:, :, 0].flatten()
+        expect1 = color1.new_tensor(0.8)
+        expect2 = color2.new_tensor(0.7)
+        self.assertClose(color1.min(), expect1)
+        self.assertClose(color1.max(), expect1)
+        self.assertClose(color2.min(), expect2)
+        self.assertClose(color2.max(), expect2)
+
+        if DEBUG:
+            from pytorch3d.vis.texture_vis import texturesuv_image_PIL as PI
+
+            PI(a, radius=5).save(DATA_DIR / "test_join_uvs_simple_a.png")
+            PI(b, radius=5).save(DATA_DIR / "test_join_uvs_simple_b.png")
+            PI(c, radius=5).save(DATA_DIR / "test_join_uvs_simple_c.png")
 
     def test_join_verts(self):
         """Meshes with TexturesVertex joined into a scene"""
@@ -867,7 +909,12 @@ class TestRenderMeshes(TestCaseMixin, unittest.TestCase):
         textures2 = TexturesAtlas(atlas=[atlas2])
         mesh1 = Meshes(verts=[verts], faces=[faces], textures=textures1)
         mesh2 = Meshes(verts=[verts_shifted1], faces=[faces], textures=textures2)
+        self.assertEqual(textures1._num_faces_per_mesh, [len(faces)])
+        self.assertEqual(textures2._num_faces_per_mesh, [len(faces)])
         mesh_joined = join_meshes_as_scene([mesh1, mesh2])
+        self.assertEqual(textures1._num_faces_per_mesh, [len(faces)])
+        self.assertEqual(textures2._num_faces_per_mesh, [len(faces)])
+        self.assertEqual(mesh_joined.textures._num_faces_per_mesh, [len(faces) * 2])
 
         R, T = look_at_view_transform(18, 0, 0)
         cameras = FoVPerspectiveCameras(device=device, R=R, T=T)
@@ -1134,4 +1181,55 @@ class TestRenderMeshes(TestCaseMixin, unittest.TestCase):
                     DATA_DIR / ("DEBUG_" + filename)
                 )
 
+            self.assertClose(rgb, image_ref, atol=0.05)
+
+    def test_cameras_kwarg(self):
+        """
+        Test that when cameras are passed in as a kwarg the rendering
+        works as expected
+        """
+        device = torch.device("cuda:0")
+
+        # Init mesh
+        sphere_mesh = ico_sphere(5, device)
+        verts_padded = sphere_mesh.verts_padded()
+        faces_padded = sphere_mesh.faces_padded()
+        feats = torch.ones_like(verts_padded, device=device)
+        textures = TexturesVertex(verts_features=feats)
+        sphere_mesh = Meshes(verts=verts_padded, faces=faces_padded, textures=textures)
+
+        # No elevation or azimuth rotation
+        R, T = look_at_view_transform(2.7, 0.0, 0.0)
+        for cam_type in (
+            FoVPerspectiveCameras,
+            FoVOrthographicCameras,
+            PerspectiveCameras,
+            OrthographicCameras,
+        ):
+            cameras = cam_type(device=device, R=R, T=T)
+
+            # Init shader settings
+            materials = Materials(device=device)
+            lights = PointLights(device=device)
+            lights.location = torch.tensor([0.0, 0.0, +2.0], device=device)[None]
+
+            raster_settings = RasterizationSettings(
+                image_size=512, blur_radius=0.0, faces_per_pixel=1
+            )
+            rasterizer = MeshRasterizer(raster_settings=raster_settings)
+            blend_params = BlendParams(1e-4, 1e-4, (0, 0, 0))
+
+            shader = HardPhongShader(
+                lights=lights,
+                materials=materials,
+                blend_params=blend_params,
+            )
+            renderer = MeshRenderer(rasterizer=rasterizer, shader=shader)
+
+            # Cameras can be passed into the renderer in the forward pass
+            images = renderer(sphere_mesh, cameras=cameras)
+            rgb = images.squeeze()[..., :3].cpu().numpy()
+            image_ref = load_rgb_image(
+                "test_simple_sphere_light_phong_%s.png" % cam_type.__name__, DATA_DIR
+            )
             self.assertClose(rgb, image_ref, atol=0.05)

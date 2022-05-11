@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  * All rights reserved.
  *
  * This source code is licensed under the BSD-style license found in the
@@ -12,6 +12,7 @@
 // clang-format on
 #include "./pulsar/pytorch/renderer.h"
 #include "./pulsar/pytorch/tensor_util.h"
+#include "ball_query/ball_query.h"
 #include "blending/sigmoid_alpha_blend.h"
 #include "compositing/alpha_composite.h"
 #include "compositing/norm_weighted_sum.h"
@@ -19,12 +20,16 @@
 #include "face_areas_normals/face_areas_normals.h"
 #include "gather_scatter/gather_scatter.h"
 #include "interp_face_attrs/interp_face_attrs.h"
+#include "iou_box3d/iou_box3d.h"
 #include "knn/knn.h"
 #include "mesh_normal_consistency/mesh_normal_consistency.h"
 #include "packed_to_padded_tensor/packed_to_padded_tensor.h"
 #include "point_mesh/point_mesh_cuda.h"
+#include "points_to_volumes/points_to_volumes.h"
 #include "rasterize_meshes/rasterize_meshes.h"
 #include "rasterize_points/rasterize_points.h"
+#include "sample_farthest_points/sample_farthest_points.h"
+#include "sample_pdf/sample_pdf.h"
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("face_areas_normals_forward", &FaceAreasNormalsForward);
@@ -38,9 +43,13 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 #endif
   m.def("knn_points_idx", &KNearestNeighborIdx);
   m.def("knn_points_backward", &KNearestNeighborBackward);
+  m.def("ball_query", &BallQuery);
+  m.def("sample_farthest_points", &FarthestPointSampling);
   m.def(
       "mesh_normal_consistency_find_verts", &MeshNormalConsistencyFindVertices);
   m.def("gather_scatter", &GatherScatter);
+  m.def("points_to_volumes_forward", PointsToVolumesForward);
+  m.def("points_to_volumes_backward", PointsToVolumesBackward);
   m.def("rasterize_points", &RasterizePoints);
   m.def("rasterize_points_backward", &RasterizePointsBackward);
   m.def("rasterize_meshes_backward", &RasterizeMeshesBackward);
@@ -78,6 +87,12 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("face_point_dist_backward", &FacePointDistanceBackward);
   m.def("point_face_array_dist_forward", &PointFaceArrayDistanceForward);
   m.def("point_face_array_dist_backward", &PointFaceArrayDistanceBackward);
+
+  // Sample PDF
+  m.def("sample_pdf", &SamplePdf);
+
+  // 3D IoU
+  m.def("iou_box3d", &IoUBox3D);
 
   // Pulsar.
 #ifdef PULSAR_LOGGING_ENABLED

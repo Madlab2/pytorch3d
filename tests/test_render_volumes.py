@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -15,9 +15,9 @@ from pytorch3d.renderer import (
     AbsorptionOnlyRaymarcher,
     AlphaCompositor,
     EmissionAbsorptionRaymarcher,
-    GridRaysampler,
     MonteCarloRaysampler,
-    NDCGridRaysampler,
+    MultinomialRaysampler,
+    NDCMultinomialRaysampler,
     PerspectiveCameras,
     PointsRasterizationSettings,
     PointsRasterizer,
@@ -151,7 +151,7 @@ def init_cameras(
     device = torch.device("cuda:0")
 
     # trivial rotations
-    R = init_uniform_y_rotations(batch_size).to(device)
+    R = init_uniform_y_rotations(batch_size=batch_size, device=device)
 
     # move camera 1.5 m away from the scene center
     T = torch.zeros((batch_size, 3), device=device)
@@ -164,7 +164,7 @@ def init_cameras(
         p0 = torch.ones(batch_size, 2, device=device)
         p0[:, 0] *= image_size[1] * 0.5
         p0[:, 1] *= image_size[0] * 0.5
-        focal = image_size[0] * torch.ones(batch_size, device=device)
+        focal = max(*image_size) * torch.ones(batch_size, device=device)
 
     # convert to a Camera object
     cameras = PerspectiveCameras(focal, p0, R=R, T=T, device=device)
@@ -228,7 +228,7 @@ class TestRenderVolumes(TestCaseMixin, unittest.TestCase):
                 with self.assertRaises(ValueError):
                     VolumeRenderer(raysampler=bad_raysampler, raymarcher=bad_raymarcher)
 
-        raysampler = NDCGridRaysampler(
+        raysampler = NDCMultinomialRaysampler(
             image_width=100,
             image_height=100,
             n_pts_per_ray=10,
@@ -295,7 +295,7 @@ class TestRenderVolumes(TestCaseMixin, unittest.TestCase):
                 _validate_ray_bundle_variables(*bad_ray_bundle)
 
     def test_compare_with_pointclouds_renderer(
-        self, batch_size=11, volume_size=(30, 30, 30), image_size=200
+        self, batch_size=11, volume_size=(30, 30, 30), image_size=(200, 250)
     ):
         """
         Generate a volume and its corresponding point cloud and check whether
@@ -303,9 +303,7 @@ class TestRenderVolumes(TestCaseMixin, unittest.TestCase):
         """
 
         # generate NDC camera extrinsics and intrinsics
-        cameras = init_cameras(
-            batch_size, image_size=[image_size, image_size], ndc=True
-        )
+        cameras = init_cameras(batch_size, image_size=image_size, ndc=True)
 
         # init the boundary volume
         for shape in ("sphere", "cube"):
@@ -340,10 +338,10 @@ class TestRenderVolumes(TestCaseMixin, unittest.TestCase):
 
             # init the grid raysampler with the ndc grid
             coord_range = 1.0
-            half_pix_size = coord_range / image_size
-            raysampler = NDCGridRaysampler(
-                image_width=image_size,
-                image_height=image_size,
+            half_pix_size = coord_range / max(*image_size)
+            raysampler = NDCMultinomialRaysampler(
+                image_width=image_size[1],
+                image_height=image_size[0],
                 n_pts_per_ray=256,
                 min_depth=0.1,
                 max_depth=2.0,
@@ -433,7 +431,7 @@ class TestRenderVolumes(TestCaseMixin, unittest.TestCase):
     ):
         """
         Tests that rendering with the MonteCarloRaysampler matches the
-        rendering with GridRaysampler sampled at the corresponding
+        rendering with MultinomialRaysampler sampled at the corresponding
         MonteCarlo locations.
         """
         volumes = init_boundary_volume(
@@ -444,7 +442,7 @@ class TestRenderVolumes(TestCaseMixin, unittest.TestCase):
         cameras = init_cameras(n_frames, image_size=image_size)
 
         # init the grid raysampler
-        raysampler_grid = GridRaysampler(
+        raysampler_multinomial = MultinomialRaysampler(
             min_x=0.5,
             max_x=image_size[1] - 0.5,
             min_y=0.5,
@@ -477,11 +475,11 @@ class TestRenderVolumes(TestCaseMixin, unittest.TestCase):
             (images_opacities_grid, ray_bundle_grid),
         ) = [
             VolumeRenderer(
-                raysampler=raysampler_grid,
+                raysampler=raysampler_multinomial,
                 raymarcher=raymarcher,
                 sample_mode="bilinear",
             )(cameras=cameras, volumes=volumes)
-            for raysampler in (raysampler_mc, raysampler_grid)
+            for raysampler in (raysampler_mc, raysampler_multinomial)
         ]
 
         # convert the mc sampling locations to [-1, 1]
@@ -499,8 +497,12 @@ class TestRenderVolumes(TestCaseMixin, unittest.TestCase):
             images_opacities_mc.permute(0, 3, 1, 2), images_opacities_mc_, atol=1e-4
         )
 
-    def test_rotating_gif(
-        self, n_frames=50, fps=15, volume_size=(100, 100, 100), image_size=(100, 100)
+    def test_rotating_gif(self):
+        self._rotating_gif(image_size=(200, 100))
+        self._rotating_gif(image_size=(100, 200))
+
+    def _rotating_gif(
+        self, image_size, n_frames=50, fps=15, volume_size=(100, 100, 100)
     ):
         """
         Render a gif animation of a rotating cube/sphere (runs only if `DEBUG==True`).
@@ -521,7 +523,7 @@ class TestRenderVolumes(TestCaseMixin, unittest.TestCase):
                 cameras = init_cameras(n_frames, image_size=image_size)
 
                 # init the grid raysampler
-                raysampler = GridRaysampler(
+                raysampler = MultinomialRaysampler(
                     min_x=0.5,
                     max_x=image_size[1] - 0.5,
                     min_y=0.5,
@@ -586,7 +588,7 @@ class TestRenderVolumes(TestCaseMixin, unittest.TestCase):
 
         # batch_size = 4 sides of the cube
         batch_size = 4
-        image_size = (50, 50)
+        image_size = (50, 40)
 
         for volume_size in ([25, 25, 25],):
             for sample_mode in ("bilinear", "nearest"):
@@ -612,7 +614,7 @@ class TestRenderVolumes(TestCaseMixin, unittest.TestCase):
                 volumes.features().requires_grad = True
                 volumes.densities().requires_grad = True
 
-                raysampler = GridRaysampler(
+                raysampler = MultinomialRaysampler(
                     min_x=0.5,
                     max_x=image_size[1] - 0.5,
                     min_y=0.5,

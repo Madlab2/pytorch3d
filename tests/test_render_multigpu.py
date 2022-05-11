@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -8,7 +8,7 @@ import unittest
 
 import torch
 import torch.nn as nn
-from common_testing import TestCaseMixin, get_random_cuda_device
+from common_testing import get_random_cuda_device, TestCaseMixin
 from pytorch3d.renderer import (
     AlphaCompositor,
     BlendParams,
@@ -159,8 +159,8 @@ class TestRenderMeshesMultiGPU(TestCaseMixin, unittest.TestCase):
         verts = ico_sphere(3).verts_padded()
         texs = verts.new_ones(verts.shape)
         model = Model()
+        model.to(GPU_LIST[0])
         model = nn.DataParallel(model, device_ids=GPU_LIST)
-        model.to(f"cuda:{model.device_ids[0]}")
 
         # Test a few iterations
         for _ in range(100):

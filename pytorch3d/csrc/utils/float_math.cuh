@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  * All rights reserved.
  *
  * This source code is licensed under the BSD-style license found in the
@@ -40,6 +40,14 @@ __device__ inline float2 operator*(const float2& a, const float2& b) {
 
 __device__ inline float2 operator*(const float a, const float2& b) {
   return make_float2(a * b.x, a * b.y);
+}
+
+__device__ inline float FloatMin3(const float a, const float b, const float c) {
+  return fminf(a, fminf(b, c));
+}
+
+__device__ inline float FloatMax3(const float a, const float b, const float c) {
+  return fmaxf(a, fmaxf(b, c));
 }
 
 __device__ inline float dot(const float2& a, const float2& b) {
