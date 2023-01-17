@@ -1188,7 +1188,9 @@ class Meshes:
         unique_mask[1:] = sorted_hash[1:] != sorted_hash[:-1]
         unique_idx = sort_idx[unique_mask]
 
-        self._edges_packed = torch.stack([u // V, u % V], dim=1)
+        self._edges_packed = torch.stack(
+            [torch.div(u, V, rounding_mode='floor'), u % V], dim=1
+        )
         self._edges_packed_to_mesh_idx = edge_to_mesh[unique_idx]
 
         self._faces_packed_to_edges_packed = inverse_idxs.reshape(3, F).t()
