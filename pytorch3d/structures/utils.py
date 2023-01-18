@@ -24,7 +24,8 @@ def list_to_padded(
     Transforms a list of N tensors each of shape (Si_0, Si_1, ... Si_D)
     into:
     - a single tensor of shape (N, pad_size(0), pad_size(1), ..., pad_size(D))
-      if pad_size is provided
+      if pad_size is provided. If pad_size has more than D entries, this is
+      done recursively.
     - or a tensor of shape (N, max(Si_0), max(Si_1), ..., max(Si_D)) if pad_size is None.
 
     Args:
@@ -64,6 +65,18 @@ def list_to_padded(
             max(y.shape[dim] for y in x if len(y) > 0) for dim in range(x[0].ndim)
         ]
     else:
+        # Potential recursion
+        ydim = x[0].ndim
+        if len(pad_size) > ydim:
+            chunk_size = pad_size[-(ydim + 1)]
+            n_chunks = len(x) / chunk_size
+            x = [list_to_padded(
+                x[i * chunk_size : (i + 1) * chunk_size], # Chunk
+                pad_size[1:],
+                pad_value,
+                equisized
+            ) for i in range(n_chunks)]
+
         if any(len(pad_size) != y.ndim for y in x):
             raise ValueError("Pad size must contain target size for all dimensions.")
         pad_dims = pad_size
@@ -166,7 +179,7 @@ def packed_to_list(x: torch.Tensor, split_size: Union[list, int]):
     Returns:
       x_list: A list of Tensors
     """
-    return x.split(split_size, dim=0)
+    return list(x.split(split_size, dim=0))
 
 
 def padded_to_packed(

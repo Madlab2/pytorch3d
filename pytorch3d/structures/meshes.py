@@ -476,7 +476,7 @@ class Meshes:
                 verts_features.ndim != 3
                 or verts_features.size(0) != self._N
             ):
-                raise ValueError("Vertex normals tensor has incorrect dimensions.")
+                raise ValueError("Vertex features tensor has incorrect dimensions.")
             self._verts_features_packed = struct_utils.padded_to_packed(
                 verts_features, split_size=self._num_verts_per_mesh.tolist()
             )
@@ -1755,6 +1755,135 @@ class Meshes:
                 if self.textures
                 else None
             ),
+        )
+
+class MeshesXD(Meshes):
+    """ Extension of 'Meshes' (3D arrays) to a arbitrary ('X') dimensions.
+    That is, the padded representation of vertices if of shape (D1, D2, ..., V,
+    3).
+
+    Note that some properties of Meshes like textures and face normals are
+    currently not supported but should be straightforward to add. Also,
+    MeshesXD requires the input to consist of lists of vertices and faces
+    (padded tensors such as in 'Meshes' are not supported).
+    """
+    def __init__(
+        self,
+        verts: list,
+        faces: list,
+        X_dims: Union[tuple, list]=None,
+        verts_features: list=None,
+    ) -> None:
+        """
+        Args:
+            verts:
+                Same as for Meshes. Items should be in row-major ordering.
+            faces:
+                Same as for Meshes. Items should be in row-major ordering.
+            X_dims:
+                The dimensions to add, including the batch dimension. Let's say
+                we have batches of sceneries with a batch size of 3 and 5
+                meshes per scene, then X_dims=(3, 5). The overall shape of the
+                padded vertices would be (3, 5, V, 3) in this case.
+            verts_features:
+                Same as for Meshes. Items should be in row-major ordering.
+        """
+        super().__init__(verts, faces, verts_features=verts_features)
+
+        if X_dims is None:
+            self._X_dims = [len(verts)]
+        else:
+            self._X_dims = X_dims
+
+        n_meshes = 1
+        for dim in self._X_dims:
+            n_meshes = n_meshes * dim
+
+        if n_meshes != self._N:
+            msg = "The number of meshes {} cannot be reshaped to X dims {}"
+            raise ValueError(msg.format(self._N, self._X_dims))
+
+        # Padded representation (X_dims[0], Xdims[1], ..., F, 3)
+        self._faces_padded_XD = None
+        # Padded representation (X_dims[0], Xdims[1], ..., V, 3)
+        self._verts_padded_XD = None
+
+        self._INTERNAL_TENSORS += ['_X_dims']
+
+    def verts_padded_XD(self):
+        self._compute_padded_XD()
+        return self._verts_padded_XD
+
+    def faces_padded_XD(self):
+        self._compute_padded_XD()
+        return self._faces_padded_XD
+
+    def _compute_padded_XD(self, refresh: bool = False):
+        """
+        Computes the padded version of meshes from verts_list and faces_list.
+        """
+        if not (
+            refresh or any(v is None for v in [self._verts_padded_XD, self._faces_padded_XD])
+        ):
+            return
+
+        verts_list = self.verts_list()
+        faces_list = self.faces_list()
+        assert (
+            faces_list is not None and verts_list is not None
+        ), "faces_list and verts_list arguments are required"
+
+        if self.isempty():
+            self._faces_padded_XD = torch.zeros(
+                (*self._X_dims, 0, 3), dtype=torch.int64, device=self.device
+            )
+            self._verts_padded_XD = torch.zeros(
+                (*self._X_dims, 0, 3), dtype=torch.float32, device=self.device
+            )
+        else:
+            self._faces_padded_XD = struct_utils.list_to_padded(
+                faces_list,
+                (*self._X_dims[1:], self._F, 3),
+                pad_value=-1.0,
+                equisized=self.equisized
+            )
+            self._verts_padded_XD = struct_utils.list_to_padded(
+                verts_list,
+                (*self._X_dims[1:], self._V, 3),
+                pad_value=0.0,
+                equisized=self.equisized
+            )
+
+    def verts_features_padded_XD(self):
+        if self.isempty():
+            return torch.zeros(
+                (*self._X_dims, 0, 1),
+                dtype=torch.float32,
+                device=self.device
+            )
+        if self._verts_features_packed is None:
+            return None
+        verts_features_list = self.verts_features_list()
+        return struct_utils.list_to_padded(
+                verts_features_list,
+            (*self._X_dims[1:], self._V, verts_features_list[0].shape[-1]),
+            pad_value=-1,
+            equisized=self.equisized
+        )
+
+    def verts_normals_padded_XD(self):
+        if self.isempty():
+            return torch.zeros(
+                (*self._X_dims, 0, 3),
+                dtype=torch.float32,
+                device=self.device
+            )
+        verts_normals_list = self.verts_normals_list()
+        return struct_utils.list_to_padded(
+            verts_normals_list,
+            (*self._X_dims[1:], self._V, 3),
+            pad_value=0.0,
+            equisized=self.equisized
         )
 
 
