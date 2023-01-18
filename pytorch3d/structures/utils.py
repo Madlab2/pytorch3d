@@ -69,7 +69,8 @@ def list_to_padded(
         ydim = x[0].ndim
         if len(pad_size) > ydim:
             chunk_size = pad_size[-(ydim + 1)]
-            n_chunks = len(x) / chunk_size
+            assert len(x) % chunk_size == 0
+            n_chunks = int(len(x) / chunk_size)
             x = [list_to_padded(
                 x[i * chunk_size : (i + 1) * chunk_size], # Chunk
                 pad_size[1:],

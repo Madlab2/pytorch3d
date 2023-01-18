@@ -1810,6 +1810,32 @@ class MeshesXD(Meshes):
 
         self._INTERNAL_TENSORS += ['_X_dims']
 
+    def clone(self):
+        """
+        Deep copy of Meshes object. All internal tensors are cloned individually.
+
+        Returns:
+            new Meshes object.
+        """
+        verts_list = self.verts_list()
+        faces_list = self.faces_list()
+        new_verts_list = [v.clone() for v in verts_list]
+        new_faces_list = [f.clone() for f in faces_list]
+        other = self.__class__(
+            verts=new_verts_list,
+            faces=new_faces_list,
+            X_dims=self._X_dims
+        )
+        for k in self._INTERNAL_TENSORS:
+            v = getattr(self, k)
+            if torch.is_tensor(v):
+                setattr(other, k, v.clone())
+
+        # Textures is not a tensor but has a clone method
+        if self.textures is not None:
+            other.textures = self.textures.clone()
+        return other
+
     def verts_padded_XD(self):
         self._compute_padded_XD()
         return self._verts_padded_XD
