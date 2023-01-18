@@ -866,7 +866,10 @@ class Meshes:
             return None
         verts_features_list = self.verts_features_list()
         return struct_utils.list_to_padded(
-            verts_features_list, (self._V, verts_features_list[0].shape[1]), pad_value=0.0, equisized=self.equisized
+            verts_features_list,
+            (self._V, verts_features_list[0].shape[1]),
+            pad_value=-1,
+            equisized=self.equisized
         )
 
     def faces_normals_packed(self):
@@ -1780,13 +1783,14 @@ def join_meshes_as_batch(meshes: List[Meshes], include_textures: bool = True) ->
         raise ValueError("Wrong first argument to join_meshes_as_batch.")
     verts = [v for mesh in meshes for v in mesh.verts_list()]
     faces = [f for mesh in meshes for f in mesh.faces_list()]
+    verts_features = [vf for mesh in meshes for vf in mesh.verts_features_list()]
     if len(meshes) == 0 or not include_textures:
-        return Meshes(verts=verts, faces=faces)
+        return Meshes(verts=verts, faces=faces, verts_features=verts_features)
 
     if meshes[0].textures is None:
         if any(mesh.textures is not None for mesh in meshes):
             raise ValueError("Inconsistent textures in join_meshes_as_batch.")
-        return Meshes(verts=verts, faces=faces)
+        return Meshes(verts=verts, faces=faces, verts_features=verts_features)
 
     if any(mesh.textures is None for mesh in meshes):
         raise ValueError("Inconsistent textures in join_meshes_as_batch.")
@@ -1800,7 +1804,7 @@ def join_meshes_as_batch(meshes: List[Meshes], include_textures: bool = True) ->
         raise ValueError("All meshes in the batch must have the same type of texture.")
 
     tex = first.join_batch(all_textures[1:])
-    return Meshes(verts=verts, faces=faces, textures=tex)
+    return Meshes(verts=verts, faces=faces, verts_features=verts_features, textures=tex)
 
 
 def join_meshes_as_scene(
@@ -1842,10 +1846,12 @@ def join_meshes_as_scene(
     verts = meshes.verts_packed()  # (sum(V_n), 3)
     # Offset automatically done by faces_packed
     faces = meshes.faces_packed()  # (sum(F_n), 3)
+    verts_features = meshes.verts_features_packed()
     textures = None
 
     if include_textures and meshes.textures is not None:
         textures = meshes.textures.join_scene()
 
-    mesh = Meshes(verts=verts.unsqueeze(0), faces=faces.unsqueeze(0), textures=textures)
+    mesh = Meshes(verts=verts.unsqueeze(0), faces=faces.unsqueeze(0),
+                  verts_features=verts_features.unsqueeze(0), textures=textures)
     return mesh
