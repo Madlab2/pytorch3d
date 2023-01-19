@@ -41,7 +41,8 @@ def list_to_padded(
       x_padded: tensor consisting of padded input tensors stored
         over the newly allocated memory.
     """
-    if equisized:
+    ydim = x[0].ndim
+    if equisized and ydim == len(pad_size):
         return torch.stack(x, 0)
 
     if not all(torch.is_tensor(y) for y in x):
@@ -66,11 +67,10 @@ def list_to_padded(
         ]
     else:
         # Potential recursion
-        ydim = x[0].ndim
         if len(pad_size) > ydim:
             chunk_size = pad_size[-(ydim + 1)]
             assert len(x) % chunk_size == 0
-            n_chunks = int(len(x) / chunk_size)
+            n_chunks = len(x) // chunk_size
             x = [list_to_padded(
                 x[i * chunk_size : (i + 1) * chunk_size], # Chunk
                 pad_size[1:],
