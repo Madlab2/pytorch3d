@@ -1773,6 +1773,7 @@ class MeshesXD(Meshes):
         faces: list,
         X_dims: Union[tuple, list]=None,
         verts_features: list=None,
+        virtual_edges: Union[tuple, list]=None,
     ) -> None:
         """
         Args:
@@ -1787,6 +1788,10 @@ class MeshesXD(Meshes):
                 padded vertices would be (3, 5, V, 3) in this case.
             verts_features:
                 Same as for Meshes. Items should be in row-major ordering.
+            virtual_edges:
+                Connect the meshes via virtual edges specified by indices
+                referring to the first X-dim. This only affects edges, not
+                faces.
         """
         super().__init__(verts, faces, verts_features=verts_features)
 
@@ -1795,9 +1800,7 @@ class MeshesXD(Meshes):
         else:
             self._X_dims = X_dims
 
-        n_meshes = 1
-        for dim in self._X_dims:
-            n_meshes = n_meshes * dim
+        n_meshes = torch.prod(torch.tensor(self._X_dims)).item()
 
         if n_meshes != self._N:
             msg = "The number of meshes {} cannot be reshaped to X dims {}"
@@ -1808,7 +1811,145 @@ class MeshesXD(Meshes):
         # Padded representation (X_dims[0], Xdims[1], ..., V, 3)
         self._verts_padded_XD = None
 
-        self._INTERNAL_TENSORS += ['_X_dims']
+        if virtual_edges:
+            for group in virtual_edges:
+                if len(group) != 2:
+                    raise ValueError(
+                        "Virtual edges should consist of groups of 2."
+                    )
+                self._virtual_edges = torch.tensor(virtual_edges)
+        else:
+            self._virtual_edges = None
+
+        self._INTERNAL_TENSORS += ['_X_dims', '_virtual_edges']
+
+    def _compute_edges_packed(self, refresh: bool = False):
+        """
+        Computes edges in packed form from the packed version of faces and verts.
+        """
+        if not (
+            refresh
+            or any(
+                v is None
+                for v in [
+                    self._edges_packed,
+                    self._faces_packed_to_mesh_idx,
+                    self._edges_packed_to_mesh_idx,
+                    self._num_edges_per_mesh,
+                    self._mesh_to_edges_packed_first_idx,
+                ]
+            )
+        ):
+            return
+
+        if self.isempty():
+            self._edges_packed = torch.full(
+                (0, 2), fill_value=-1, dtype=torch.int64, device=self.device
+            )
+            self._edges_packed_to_mesh_idx = torch.zeros(
+                (0,), dtype=torch.int64, device=self.device
+            )
+            return
+
+        faces = self.faces_packed()
+        F = faces.shape[0]
+        v0, v1, v2 = faces.chunk(3, dim=1)
+        e01 = torch.cat([v0, v1], dim=1)  # (sum(F_n), 2)
+        e12 = torch.cat([v1, v2], dim=1)  # (sum(F_n), 2)
+        e20 = torch.cat([v2, v0], dim=1)  # (sum(F_n), 2)
+
+        # All edges including duplicates.
+        edges = torch.cat([e12, e20, e01], dim=0)  # (sum(F_n)*3, 2)
+        edge_to_mesh = torch.cat(
+            [
+                self._faces_packed_to_mesh_idx,
+                self._faces_packed_to_mesh_idx,
+                self._faces_packed_to_mesh_idx,
+            ],
+            dim=0,
+        )  # sum(F_n)*3
+
+        # Potentially connect surfaces by adding edges between vertices of
+        # the same index.
+        # This requires the vertices to be stored in the correct order! The
+        # groups should be given pair-wise
+        if self._virtual_edges is not None:
+            assert (self.equisized,
+                    "Virtual edges only possible for equisized meshes")
+            V_C = self._verts_padded_XD.shape[-2]
+            chunk_size = self._X_dims[-1]
+            n_chunks = self._N // chunk_size
+            for c in range(n_chunks):
+                offset = c * chunk_size * V_C
+                for group in self._virtual_edges:
+                    connect_edges = torch.stack(
+                        [torch.arange(
+                            offset + g * V_C,
+                            offset + (g + 1) * V_C
+                        ) for g in group],
+                        dim=1
+                    ).to(edges.device) # (V_C, 2)
+                    edges = torch.cat([edges, connect_edges], dim=0)
+
+        # Sort the edges in increasing vertex order to remove duplicates as
+        # the same edge may appear in different orientations in different faces.
+        # i.e. rows in edges after sorting will be of the form (v0, v1) where v1 > v0.
+        # This sorting does not change the order in dim=0.
+        edges, _ = edges.sort(dim=1)
+
+        # Remove duplicate edges: convert each edge (v0, v1) into an
+        # integer hash = V * v0 + v1; this allows us to use the scalar version of
+        # unique which is much faster than edges.unique(dim=1) which is very slow.
+        # After finding the unique elements reconstruct the vertex indices as:
+        # (v0, v1) = (hash / V, hash % V)
+        # The inverse maps from unique_edges back to edges:
+        # unique_edges[inverse_idxs] == edges
+        # i.e. inverse_idxs[i] == j means that edges[i] == unique_edges[j]
+
+        V = self._verts_packed.shape[0]
+        edges_hash = V * edges[:, 0] + edges[:, 1]
+        u, inverse_idxs = torch.unique(edges_hash, return_inverse=True)
+
+        # Find indices of unique elements.
+        # TODO (nikhilar) remove following 4 lines when torch.unique has support
+        # for returning unique indices
+        sorted_hash, sort_idx = torch.sort(edges_hash, dim=0)
+        unique_mask = torch.ones(
+            edges_hash.shape[0], dtype=torch.bool, device=self.device
+        )
+        unique_mask[1:] = sorted_hash[1:] != sorted_hash[:-1]
+        unique_idx = sort_idx[unique_mask]
+
+        self._edges_packed = torch.stack(
+            [torch.div(u, V, rounding_mode='floor'), u % V], dim=1
+        )
+
+        # Rest not possible if meshes are connected via virtual edges
+        if self._virtual_edges is not None:
+            return
+
+        self._edges_packed_to_mesh_idx = edge_to_mesh[unique_idx]
+
+        self._faces_packed_to_edges_packed = inverse_idxs.reshape(3, F).t()
+
+        # Compute number of edges per mesh
+        num_edges_per_mesh = torch.zeros(self._N, dtype=torch.int32, device=self.device)
+        ones = torch.ones(1, dtype=torch.int32, device=self.device).expand(
+            self._edges_packed_to_mesh_idx.shape
+        )
+        num_edges_per_mesh = num_edges_per_mesh.scatter_add_(
+            0, self._edges_packed_to_mesh_idx, ones
+        )
+        self._num_edges_per_mesh = num_edges_per_mesh
+
+        # Compute first idx for each mesh in edges_packed
+        mesh_to_edges_packed_first_idx = torch.zeros(
+            self._N, dtype=torch.int64, device=self.device
+        )
+        num_edges_cumsum = num_edges_per_mesh.cumsum(dim=0)
+        mesh_to_edges_packed_first_idx[1:] = num_edges_cumsum[:-1].clone()
+
+        self._mesh_to_edges_packed_first_idx = mesh_to_edges_packed_first_idx
 
     def clone(self):
         """
