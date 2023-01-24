@@ -1951,6 +1951,34 @@ class MeshesXD(Meshes):
 
         self._mesh_to_edges_packed_first_idx = mesh_to_edges_packed_first_idx
 
+    def transform(self, affine_matrix: torch.Tensor):
+        """
+        New Meshes object with applied transformation matrix.
+
+        Args:
+            affine_matrix: Optionally provide a transformation matrix for the
+            cloned meshes.
+
+        Returns:
+            new Meshes object.
+        """
+        verts_list = self.verts_list()
+        faces_list = self.faces_list()
+        new_verts_faces = [struct_utils.transform_mesh_affine(
+            v.clone(), f.clone(), affine_matrix
+        ) for v, f in zip(verts_list, faces_list)]
+        new_verts_list = [x[0] for x in new_verts_faces]
+        new_faces_list = [x[1] for x in new_verts_faces]
+        other = self.__class__(
+            verts=new_verts_list,
+            faces=new_faces_list,
+            X_dims=self._X_dims,
+            verts_features=self.verts_features_list(),
+            virtual_edges=self._virtual_edges,
+        )
+
+        return other
+
     def clone(self):
         """
         Deep copy of Meshes object. All internal tensors are cloned individually.
@@ -1976,6 +2004,9 @@ class MeshesXD(Meshes):
         if self.textures is not None:
             other.textures = self.textures.clone()
         return other
+
+    def X_dims(self):
+        return self._X_dims
 
     def verts_padded_XD(self):
         self._compute_padded_XD()

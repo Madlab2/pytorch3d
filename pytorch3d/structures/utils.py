@@ -14,6 +14,74 @@ Util functions for points/verts/faces/volumes.
 """
 
 
+def flips_winding(matrix: torch.Tensor):
+    """
+    Check to see if a matrix will invert triangles. Re-implementation of
+    trimesh.transformations.flips_winding
+
+    Args:
+        matrix : (4, 4) Homogeneous transformation matrix
+
+    Returns:
+        True if matrix will flip winding of triangles.
+    """
+    device = matrix.device
+    dtype = matrix.dtype
+    # how many random triangles do we really want
+    count = 3
+    # test rotation against some random triangles
+    tri = torch.rand((count * 3, 3), device=device, dtype=dtype)
+    rot = (matrix[:3, :3] @ tri.T).T
+
+    # stack them into one triangle soup
+    triangles = torch.vstack((tri, rot)).reshape((-1, 3, 3))
+    # find the normals of every triangle
+    vectors = torch.diff(triangles, dim=1)
+    cross = torch.cross(vectors[:, 0], vectors[:, 1])
+    # rotate the original normals to match
+    cross[:count] = (matrix[:3, :3] @ cross[:count].T).T
+    # unitize normals
+    norm = torch.norm(cross, dim=-1, keepdim=True)
+    cross = cross / norm
+    # find the projection of the two normals
+    projection = torch.sum(cross[:count] * cross[count:], dim=-1)
+    # if the winding was flipped but not the normal
+    # the projection will be negative, and since we're
+    # checking a few triangles check against the mean
+    flip = projection.mean() < 0.0
+
+    return flip
+
+
+def transform_mesh_affine(
+    vertices: torch.Tensor,
+    faces: torch.Tensor,
+    transformation_matrix: torch.Tensor
+):
+    """ Transform vertices of shape (V, D) using a given
+    transformation matrix such that v_new = (mat @ v.T).T. """
+
+    V, D = vertices.shape
+    if (tuple(transformation_matrix.shape) != (D + 1, D + 1)):
+        raise ValueError("Transformation matrix should be affine. ")
+
+    coords = torch.cat(
+        (vertices.T, torch.ones(1, V).to(vertices.device)),
+        dim=0
+    )
+
+    # Transform
+    new_coords = (transformation_matrix @ coords).T[:,:-1]
+
+    # Adapt faces s.t. normal convention is still fulfilled
+    if flips_winding(transformation_matrix):
+        new_faces = faces.flip(dims=[1])
+    else: # No flip required
+        new_faces = faces
+
+    return new_coords, new_faces
+
+
 def list_to_padded(
     x: Union[List[torch.Tensor], Tuple[torch.Tensor]],
     pad_size: Union[Sequence[int], None] = None,
