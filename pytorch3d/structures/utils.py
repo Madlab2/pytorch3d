@@ -136,7 +136,7 @@ def list_to_padded(
     else:
         # Potential recursion
         if len(pad_size) > ydim:
-            chunk_size = pad_size[-(ydim + 1)]
+            chunk_size = torch.prod(torch.tensor(pad_size[:-ydim])).item()
             assert len(x) % chunk_size == 0
             n_chunks = len(x) // chunk_size
             x = [list_to_padded(
