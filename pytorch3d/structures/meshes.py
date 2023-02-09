@@ -1767,6 +1767,9 @@ class MeshesXD(Meshes):
     MeshesXD requires the input to consist of lists of vertices and faces
     (padded tensors such as in 'Meshes' are not supported).
     """
+
+    _INTERNAL_TENSORS = Meshes._INTERNAL_TENSORS + ['_X_dims', '_virtual_edges']
+
     def __init__(
         self,
         verts: list,
@@ -1820,8 +1823,6 @@ class MeshesXD(Meshes):
                 self._virtual_edges = torch.tensor(virtual_edges)
         else:
             self._virtual_edges = None
-
-        self._INTERNAL_TENSORS += ['_X_dims', '_virtual_edges']
 
     def _compute_edges_packed(self, refresh: bool = False):
         """
