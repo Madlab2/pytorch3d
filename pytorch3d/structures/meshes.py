@@ -463,6 +463,11 @@ class Meshes:
             if len(verts_features) != self._N:
                 raise ValueError("Invalid verts_features input")
 
+            if not all(t.device == self.device for t in verts_features):
+                raise ValueError(
+                    "Vertex features should be on the same device as vertices."
+                )
+
             for item, n_verts in zip(verts_features, self._num_verts_per_mesh):
                 if (
                     not isinstance(item, torch.Tensor)
@@ -477,6 +482,11 @@ class Meshes:
                 or verts_features.size(0) != self._N
             ):
                 raise ValueError("Vertex features tensor has incorrect dimensions.")
+            if not verts_features.device == self.device:
+                raise ValueError(
+                    "Vertex features should be on the same device as vertices."
+                )
+
             self._verts_features_packed = struct_utils.padded_to_packed(
                 verts_features, split_size=self._num_verts_per_mesh.tolist()
             )
@@ -488,6 +498,11 @@ class Meshes:
             if len(verts_normals) != self._N:
                 raise ValueError("Invalid verts_normals input")
 
+            if not all(t.device == self.device for t in verts_normals):
+                raise ValueError(
+                    "Vertex normals should be on the same device as vertices."
+                )
+
             for item, n_verts in zip(verts_normals, self._num_verts_per_mesh):
                 if (
                     not isinstance(item, torch.Tensor)
@@ -498,6 +513,11 @@ class Meshes:
                     raise ValueError("Invalid verts_normals input")
             self._verts_normals_packed = torch.cat(verts_normals, 0)
         elif torch.is_tensor(verts_normals):
+            if not verts_normals.device == self.device:
+                raise ValueError(
+                    "Vertex normals should be on the same device as vertices."
+                )
+
             if (
                 verts_normals.ndim != 3
                 or verts_normals.size(2) != 3
