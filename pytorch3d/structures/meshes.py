@@ -463,6 +463,11 @@ class Meshes:
             if len(verts_features) != self._N:
                 raise ValueError("Invalid verts_features input")
 
+            if not all(t.device == self.device for t in verts_features):
+                raise ValueError(
+                    "Vertex features should be on the same device as vertices."
+                )
+
             for item, n_verts in zip(verts_features, self._num_verts_per_mesh):
                 if (
                     not isinstance(item, torch.Tensor)
@@ -476,7 +481,12 @@ class Meshes:
                 verts_features.ndim != 3
                 or verts_features.size(0) != self._N
             ):
-                raise ValueError("Vertex normals tensor has incorrect dimensions.")
+                raise ValueError("Vertex features tensor has incorrect dimensions.")
+            if not verts_features.device == self.device:
+                raise ValueError(
+                    "Vertex features should be on the same device as vertices."
+                )
+
             self._verts_features_packed = struct_utils.padded_to_packed(
                 verts_features, split_size=self._num_verts_per_mesh.tolist()
             )
@@ -488,6 +498,11 @@ class Meshes:
             if len(verts_normals) != self._N:
                 raise ValueError("Invalid verts_normals input")
 
+            if not all(t.device == self.device for t in verts_normals):
+                raise ValueError(
+                    "Vertex normals should be on the same device as vertices."
+                )
+
             for item, n_verts in zip(verts_normals, self._num_verts_per_mesh):
                 if (
                     not isinstance(item, torch.Tensor)
@@ -498,6 +513,11 @@ class Meshes:
                     raise ValueError("Invalid verts_normals input")
             self._verts_normals_packed = torch.cat(verts_normals, 0)
         elif torch.is_tensor(verts_normals):
+            if not verts_normals.device == self.device:
+                raise ValueError(
+                    "Vertex normals should be on the same device as vertices."
+                )
+
             if (
                 verts_normals.ndim != 3
                 or verts_normals.size(2) != 3
@@ -866,7 +886,10 @@ class Meshes:
             return None
         verts_features_list = self.verts_features_list()
         return struct_utils.list_to_padded(
-            verts_features_list, (self._V, verts_features_list[0].shape[1]), pad_value=0.0, equisized=self.equisized
+            verts_features_list,
+            (self._V, verts_features_list[0].shape[1]),
+            pad_value=-1,
+            equisized=self.equisized
         )
 
     def faces_normals_packed(self):
@@ -1754,6 +1777,334 @@ class Meshes:
             ),
         )
 
+class MeshesXD(Meshes):
+    """ Extension of 'Meshes' (3D arrays) to a arbitrary ('X') dimensions.
+    That is, the padded representation of vertices if of shape (D1, D2, ..., V,
+    3).
+
+    Note that some properties of Meshes like textures and face normals are
+    currently not supported but should be straightforward to add. Also,
+    MeshesXD requires the input to consist of lists of vertices and faces
+    (padded tensors such as in 'Meshes' are not supported).
+    """
+
+    _INTERNAL_TENSORS = Meshes._INTERNAL_TENSORS + ['_X_dims', '_virtual_edges']
+
+    def __init__(
+        self,
+        verts: list,
+        faces: list,
+        X_dims: Union[tuple, list]=None,
+        verts_features: list=None,
+        virtual_edges: Union[tuple, list]=None,
+    ) -> None:
+        """
+        Args:
+            verts:
+                Same as for Meshes. Items should be in row-major ordering.
+            faces:
+                Same as for Meshes. Items should be in row-major ordering.
+            X_dims:
+                The dimensions to add, including the batch dimension. Let's say
+                we have batches of sceneries with a batch size of 3 and 5
+                meshes per scene, then X_dims=(3, 5). The overall shape of the
+                padded vertices would be (3, 5, V, 3) in this case.
+            verts_features:
+                Same as for Meshes. Items should be in row-major ordering.
+            virtual_edges:
+                Connect the meshes via virtual edges specified by indices
+                referring to the first X-dim. This only affects edges, not
+                faces.
+        """
+        super().__init__(verts, faces, verts_features=verts_features)
+
+        if X_dims is None:
+            self._X_dims = [len(verts)]
+        else:
+            self._X_dims = X_dims
+
+        n_meshes = torch.prod(torch.tensor(self._X_dims)).item()
+
+        if n_meshes != self._N:
+            msg = "The number of meshes {} cannot be reshaped to X dims {}"
+            raise ValueError(msg.format(self._N, self._X_dims))
+
+        # Padded representation (X_dims[0], Xdims[1], ..., F, 3)
+        self._faces_padded_XD = None
+        # Padded representation (X_dims[0], Xdims[1], ..., V, 3)
+        self._verts_padded_XD = None
+
+        if virtual_edges:
+            for group in virtual_edges:
+                if len(group) != 2:
+                    raise ValueError(
+                        "Virtual edges should consist of groups of 2."
+                    )
+                self._virtual_edges = torch.tensor(virtual_edges)
+        else:
+            self._virtual_edges = None
+
+    def _compute_edges_packed(self, refresh: bool = False):
+        """
+        Computes edges in packed form from the packed version of faces and verts.
+        """
+        if not (
+            refresh
+            or any(
+                v is None
+                for v in [
+                    self._edges_packed,
+                    self._faces_packed_to_mesh_idx,
+                    self._edges_packed_to_mesh_idx,
+                    self._num_edges_per_mesh,
+                    self._mesh_to_edges_packed_first_idx,
+                ]
+            )
+        ):
+            return
+
+        if self.isempty():
+            self._edges_packed = torch.full(
+                (0, 2), fill_value=-1, dtype=torch.int64, device=self.device
+            )
+            self._edges_packed_to_mesh_idx = torch.zeros(
+                (0,), dtype=torch.int64, device=self.device
+            )
+            return
+
+        faces = self.faces_packed()
+        F = faces.shape[0]
+        v0, v1, v2 = faces.chunk(3, dim=1)
+        e01 = torch.cat([v0, v1], dim=1)  # (sum(F_n), 2)
+        e12 = torch.cat([v1, v2], dim=1)  # (sum(F_n), 2)
+        e20 = torch.cat([v2, v0], dim=1)  # (sum(F_n), 2)
+
+        # All edges including duplicates.
+        edges = torch.cat([e12, e20, e01], dim=0)  # (sum(F_n)*3, 2)
+        edge_to_mesh = torch.cat(
+            [
+                self._faces_packed_to_mesh_idx,
+                self._faces_packed_to_mesh_idx,
+                self._faces_packed_to_mesh_idx,
+            ],
+            dim=0,
+        )  # sum(F_n)*3
+
+        # Potentially connect surfaces by adding edges between vertices of
+        # the same index.
+        # This requires the vertices to be stored in the correct order! The
+        # groups should be given pair-wise
+        if self._virtual_edges is not None:
+            assert (self.equisized,
+                    "Virtual edges only possible for equisized meshes")
+            V_C = self._verts_padded_XD.shape[-2]
+            chunk_size = self._X_dims[-1]
+            n_chunks = self._N // chunk_size
+            for c in range(n_chunks):
+                offset = c * chunk_size * V_C
+                for group in self._virtual_edges:
+                    connect_edges = torch.stack(
+                        [torch.arange(
+                            offset + g * V_C,
+                            offset + (g + 1) * V_C
+                        ) for g in group],
+                        dim=1
+                    ).to(edges.device) # (V_C, 2)
+                    edges = torch.cat([edges, connect_edges], dim=0)
+
+        # Sort the edges in increasing vertex order to remove duplicates as
+        # the same edge may appear in different orientations in different faces.
+        # i.e. rows in edges after sorting will be of the form (v0, v1) where v1 > v0.
+        # This sorting does not change the order in dim=0.
+        edges, _ = edges.sort(dim=1)
+
+        # Remove duplicate edges: convert each edge (v0, v1) into an
+        # integer hash = V * v0 + v1; this allows us to use the scalar version of
+        # unique which is much faster than edges.unique(dim=1) which is very slow.
+        # After finding the unique elements reconstruct the vertex indices as:
+        # (v0, v1) = (hash / V, hash % V)
+        # The inverse maps from unique_edges back to edges:
+        # unique_edges[inverse_idxs] == edges
+        # i.e. inverse_idxs[i] == j means that edges[i] == unique_edges[j]
+
+        V = self._verts_packed.shape[0]
+        edges_hash = V * edges[:, 0] + edges[:, 1]
+        u, inverse_idxs = torch.unique(edges_hash, return_inverse=True)
+
+        # Find indices of unique elements.
+        # TODO (nikhilar) remove following 4 lines when torch.unique has support
+        # for returning unique indices
+        sorted_hash, sort_idx = torch.sort(edges_hash, dim=0)
+        unique_mask = torch.ones(
+            edges_hash.shape[0], dtype=torch.bool, device=self.device
+        )
+        unique_mask[1:] = sorted_hash[1:] != sorted_hash[:-1]
+        unique_idx = sort_idx[unique_mask]
+
+        self._edges_packed = torch.stack(
+            [torch.div(u, V, rounding_mode='floor'), u % V], dim=1
+        )
+
+        # Rest not possible if meshes are connected via virtual edges
+        if self._virtual_edges is not None:
+            return
+
+        self._edges_packed_to_mesh_idx = edge_to_mesh[unique_idx]
+
+        self._faces_packed_to_edges_packed = inverse_idxs.reshape(3, F).t()
+
+        # Compute number of edges per mesh
+        num_edges_per_mesh = torch.zeros(self._N, dtype=torch.int32, device=self.device)
+        ones = torch.ones(1, dtype=torch.int32, device=self.device).expand(
+            self._edges_packed_to_mesh_idx.shape
+        )
+        num_edges_per_mesh = num_edges_per_mesh.scatter_add_(
+            0, self._edges_packed_to_mesh_idx, ones
+        )
+        self._num_edges_per_mesh = num_edges_per_mesh
+
+        # Compute first idx for each mesh in edges_packed
+        mesh_to_edges_packed_first_idx = torch.zeros(
+            self._N, dtype=torch.int64, device=self.device
+        )
+        num_edges_cumsum = num_edges_per_mesh.cumsum(dim=0)
+        mesh_to_edges_packed_first_idx[1:] = num_edges_cumsum[:-1].clone()
+
+        self._mesh_to_edges_packed_first_idx = mesh_to_edges_packed_first_idx
+
+    def transform(self, affine_matrix: torch.Tensor):
+        """
+        New Meshes object with applied transformation matrix.
+
+        Args:
+            affine_matrix: Optionally provide a transformation matrix for the
+            cloned meshes.
+
+        Returns:
+            new Meshes object.
+        """
+        verts_list = self.verts_list()
+        faces_list = self.faces_list()
+        new_verts_faces = [struct_utils.transform_mesh_affine(
+            v.clone(), f.clone(), affine_matrix
+        ) for v, f in zip(verts_list, faces_list)]
+        new_verts_list = [x[0] for x in new_verts_faces]
+        new_faces_list = [x[1] for x in new_verts_faces]
+        other = self.__class__(
+            verts=new_verts_list,
+            faces=new_faces_list,
+            X_dims=self._X_dims,
+            verts_features=self.verts_features_list(),
+            virtual_edges=self._virtual_edges,
+        )
+
+        return other
+
+    def clone(self):
+        """
+        Deep copy of Meshes object. All internal tensors are cloned individually.
+
+        Returns:
+            new Meshes object.
+        """
+        verts_list = self.verts_list()
+        faces_list = self.faces_list()
+        new_verts_list = [v.clone() for v in verts_list]
+        new_faces_list = [f.clone() for f in faces_list]
+        other = self.__class__(
+            verts=new_verts_list,
+            faces=new_faces_list,
+            X_dims=self._X_dims
+        )
+        for k in self._INTERNAL_TENSORS:
+            v = getattr(self, k)
+            if torch.is_tensor(v):
+                setattr(other, k, v.clone())
+
+        # Textures is not a tensor but has a clone method
+        if self.textures is not None:
+            other.textures = self.textures.clone()
+        return other
+
+    def X_dims(self):
+        return self._X_dims
+
+    def verts_padded_XD(self):
+        self._compute_padded_XD()
+        return self._verts_padded_XD
+
+    def faces_padded_XD(self):
+        self._compute_padded_XD()
+        return self._faces_padded_XD
+
+    def _compute_padded_XD(self, refresh: bool = False):
+        """
+        Computes the padded version of meshes from verts_list and faces_list.
+        """
+        if not (
+            refresh or any(v is None for v in [self._verts_padded_XD, self._faces_padded_XD])
+        ):
+            return
+
+        verts_list = self.verts_list()
+        faces_list = self.faces_list()
+        assert (
+            faces_list is not None and verts_list is not None
+        ), "faces_list and verts_list arguments are required"
+
+        if self.isempty():
+            self._faces_padded_XD = torch.zeros(
+                (*self._X_dims, 0, 3), dtype=torch.int64, device=self.device
+            )
+            self._verts_padded_XD = torch.zeros(
+                (*self._X_dims, 0, 3), dtype=torch.float32, device=self.device
+            )
+        else:
+            self._faces_padded_XD = struct_utils.list_to_padded(
+                faces_list,
+                (*self._X_dims[1:], self._F, 3),
+                pad_value=-1.0,
+                equisized=self.equisized
+            )
+            self._verts_padded_XD = struct_utils.list_to_padded(
+                verts_list,
+                (*self._X_dims[1:], self._V, 3),
+                pad_value=0.0,
+                equisized=self.equisized
+            )
+
+    def verts_features_padded_XD(self):
+        if self.isempty():
+            return torch.zeros(
+                (*self._X_dims, 0, 1),
+                dtype=torch.float32,
+                device=self.device
+            )
+        if self._verts_features_packed is None:
+            return None
+        verts_features_list = self.verts_features_list()
+        return struct_utils.list_to_padded(
+                verts_features_list,
+            (*self._X_dims[1:], self._V, verts_features_list[0].shape[-1]),
+            pad_value=-1,
+            equisized=self.equisized
+        )
+
+    def verts_normals_padded_XD(self):
+        if self.isempty():
+            return torch.zeros(
+                (*self._X_dims, 0, 3),
+                dtype=torch.float32,
+                device=self.device
+            )
+        verts_normals_list = self.verts_normals_list()
+        return struct_utils.list_to_padded(
+            verts_normals_list,
+            (*self._X_dims[1:], self._V, 3),
+            pad_value=0.0,
+            equisized=self.equisized
+        )
+
 
 def join_meshes_as_batch(meshes: List[Meshes], include_textures: bool = True) -> Meshes:
     """
@@ -1780,13 +2131,14 @@ def join_meshes_as_batch(meshes: List[Meshes], include_textures: bool = True) ->
         raise ValueError("Wrong first argument to join_meshes_as_batch.")
     verts = [v for mesh in meshes for v in mesh.verts_list()]
     faces = [f for mesh in meshes for f in mesh.faces_list()]
+    verts_features = [vf for mesh in meshes for vf in mesh.verts_features_list()]
     if len(meshes) == 0 or not include_textures:
-        return Meshes(verts=verts, faces=faces)
+        return Meshes(verts=verts, faces=faces, verts_features=verts_features)
 
     if meshes[0].textures is None:
         if any(mesh.textures is not None for mesh in meshes):
             raise ValueError("Inconsistent textures in join_meshes_as_batch.")
-        return Meshes(verts=verts, faces=faces)
+        return Meshes(verts=verts, faces=faces, verts_features=verts_features)
 
     if any(mesh.textures is None for mesh in meshes):
         raise ValueError("Inconsistent textures in join_meshes_as_batch.")
@@ -1800,7 +2152,7 @@ def join_meshes_as_batch(meshes: List[Meshes], include_textures: bool = True) ->
         raise ValueError("All meshes in the batch must have the same type of texture.")
 
     tex = first.join_batch(all_textures[1:])
-    return Meshes(verts=verts, faces=faces, textures=tex)
+    return Meshes(verts=verts, faces=faces, verts_features=verts_features, textures=tex)
 
 
 def join_meshes_as_scene(
@@ -1842,10 +2194,12 @@ def join_meshes_as_scene(
     verts = meshes.verts_packed()  # (sum(V_n), 3)
     # Offset automatically done by faces_packed
     faces = meshes.faces_packed()  # (sum(F_n), 3)
+    verts_features = meshes.verts_features_packed()
     textures = None
 
     if include_textures and meshes.textures is not None:
         textures = meshes.textures.join_scene()
 
-    mesh = Meshes(verts=verts.unsqueeze(0), faces=faces.unsqueeze(0), textures=textures)
+    mesh = Meshes(verts=verts.unsqueeze(0), faces=faces.unsqueeze(0),
+                  verts_features=verts_features.unsqueeze(0), textures=textures)
     return mesh

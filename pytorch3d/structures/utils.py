@@ -14,6 +14,74 @@ Util functions for points/verts/faces/volumes.
 """
 
 
+def flips_winding(matrix: torch.Tensor):
+    """
+    Check to see if a matrix will invert triangles. Re-implementation of
+    trimesh.transformations.flips_winding
+
+    Args:
+        matrix : (4, 4) Homogeneous transformation matrix
+
+    Returns:
+        True if matrix will flip winding of triangles.
+    """
+    device = matrix.device
+    dtype = matrix.dtype
+    # how many random triangles do we really want
+    count = 3
+    # test rotation against some random triangles
+    tri = torch.rand((count * 3, 3), device=device, dtype=dtype)
+    rot = (matrix[:3, :3] @ tri.T).T
+
+    # stack them into one triangle soup
+    triangles = torch.vstack((tri, rot)).reshape((-1, 3, 3))
+    # find the normals of every triangle
+    vectors = torch.diff(triangles, dim=1)
+    cross = torch.cross(vectors[:, 0], vectors[:, 1])
+    # rotate the original normals to match
+    cross[:count] = (matrix[:3, :3] @ cross[:count].T).T
+    # unitize normals
+    norm = torch.norm(cross, dim=-1, keepdim=True)
+    cross = cross / norm
+    # find the projection of the two normals
+    projection = torch.sum(cross[:count] * cross[count:], dim=-1)
+    # if the winding was flipped but not the normal
+    # the projection will be negative, and since we're
+    # checking a few triangles check against the mean
+    flip = projection.mean() < 0.0
+
+    return flip
+
+
+def transform_mesh_affine(
+    vertices: torch.Tensor,
+    faces: torch.Tensor,
+    transformation_matrix: torch.Tensor
+):
+    """ Transform vertices of shape (V, D) using a given
+    transformation matrix such that v_new = (mat @ v.T).T. """
+
+    V, D = vertices.shape
+    if (tuple(transformation_matrix.shape) != (D + 1, D + 1)):
+        raise ValueError("Transformation matrix should be affine. ")
+
+    coords = torch.cat(
+        (vertices.T, torch.ones(1, V).to(vertices.device)),
+        dim=0
+    )
+
+    # Transform
+    new_coords = (transformation_matrix @ coords).T[:,:-1]
+
+    # Adapt faces s.t. normal convention is still fulfilled
+    if flips_winding(transformation_matrix):
+        new_faces = faces.flip(dims=[1])
+    else: # No flip required
+        new_faces = faces
+
+    return new_coords, new_faces
+
+
 def list_to_padded(
     x: Union[List[torch.Tensor], Tuple[torch.Tensor]],
     pad_size: Union[Sequence[int], None] = None,
@@ -24,7 +92,8 @@ def list_to_padded(
     Transforms a list of N tensors each of shape (Si_0, Si_1, ... Si_D)
     into:
     - a single tensor of shape (N, pad_size(0), pad_size(1), ..., pad_size(D))
-      if pad_size is provided
+      if pad_size is provided. If pad_size has more than D entries, this is
+      done recursively.
     - or a tensor of shape (N, max(Si_0), max(Si_1), ..., max(Si_D)) if pad_size is None.
 
     Args:
@@ -40,7 +109,8 @@ def list_to_padded(
       x_padded: tensor consisting of padded input tensors stored
         over the newly allocated memory.
     """
-    if equisized:
+    ydim = x[0].ndim
+    if equisized and ydim == len(pad_size):
         return torch.stack(x, 0)
 
     if not all(torch.is_tensor(y) for y in x):
@@ -64,6 +134,18 @@ def list_to_padded(
             max(y.shape[dim] for y in x if len(y) > 0) for dim in range(x[0].ndim)
         ]
     else:
+        # Potential recursion
+        if len(pad_size) > ydim:
+            chunk_size = torch.prod(torch.tensor(pad_size[:-ydim])).item()
+            assert len(x) % chunk_size == 0
+            n_chunks = len(x) // chunk_size
+            x = [list_to_padded(
+                x[i * chunk_size : (i + 1) * chunk_size], # Chunk
+                pad_size[1:],
+                pad_value,
+                equisized
+            ) for i in range(n_chunks)]
+
         if any(len(pad_size) != y.ndim for y in x):
             raise ValueError("Pad size must contain target size for all dimensions.")
         pad_dims = pad_size
@@ -166,7 +248,7 @@ def packed_to_list(x: torch.Tensor, split_size: Union[list, int]):
     Returns:
       x_list: A list of Tensors
     """
-    return x.split(split_size, dim=0)
+    return list(x.split(split_size, dim=0))
 
 
 def padded_to_packed(
