@@ -19,7 +19,21 @@ from pytorch3d.renderer.mesh.rasterizer import Fragments as MeshFragments
 from pytorch3d.ops import cot_laplacian
 from pytorch3d.structures import Meshes
 
-def compute_mean_curvature(verts, faces):
+
+def check_outward_normals(samples, normals):
+    # Compute mesh centroid
+    for samples_mesh, normals_mesh in zip(samples, normals):
+        centroid = samples_mesh.mean(dim=0)
+        
+        # Check if normals point away from centroid
+        samples_to_centroid = centroid - samples_mesh
+        normal_alignment = torch.sum(normals_mesh * samples_to_centroid, dim=1)
+        
+        # Most normals should have positive dot product
+        outward_percentage = (normal_alignment > 0).float().mean()
+        print(f"Normals outward percentage for mesh is {outward_percentage}")
+
+def compute_mean_curvature(verts_packed, faces_packed, vert_normals, signed=True):
     """
     Compute mean curvature at each vertex using PyTorch3D.
     
@@ -30,15 +44,25 @@ def compute_mean_curvature(verts, faces):
     Returns:
         torch.Tensor: Mean curvature for each vertex of shape (V,).
     """
-    L, _ = cot_laplacian(verts, faces)  # Shape: (V, V)
+    with torch.no_grad():
+        L, inv_areas = cot_laplacian(verts_packed, faces_packed)  # Shape: (V, V)
     
-    # Apply the Laplacian to the vertex positions to get curvature approximation
-    mean_curvature_normals = torch.sparse.mm(L.double(), verts.double())  # Shape: (V, 3)
+        # Apply the Laplacian to the vertex positions to get curvature approximation
+        mean_curvature_normals = torch.sparse.mm(L.double(), verts_packed.double())  # Shape: (V, 3)
+        
+        # Compute mean curvature as the magnitude of the mean curvature normal vector
+        mean_curvature = mean_curvature_normals.norm(dim=1)  # Shape: (V,)
     
-    # Compute mean curvature as the magnitude of the mean curvature normal vector
-    mean_curvature = mean_curvature_normals.norm(dim=1)  # Shape: (V,)
-    
-    return mean_curvature
+    if signed:
+        # Compute the signed mean curvature by projecting onto the normal
+        signs = (mean_curvature_normals * vert_normals).sum(dim=1)
+        signed_mean_curvature = signs * mean_curvature
+        # Standard-normalize the mean curvature values
+        mean = signed_mean_curvature.mean()
+        std = signed_mean_curvature.std()
+        return (signed_mean_curvature - mean) / std
+    else:
+        return mean_curvature
 
 def sample_points_from_meshes(
     meshes,
@@ -110,7 +134,7 @@ def sample_points_from_meshes(
         raise ValueError("Meshes do not contain vertex features.")
 
     # hard coded
-    num_samples = 75000
+    num_samples = 100000 # use 50.000 when no replacement sampling
 
     faces = meshes.faces_packed()
     mesh_to_face = meshes.mesh_to_faces_packed_first_idx()
@@ -119,8 +143,10 @@ def sample_points_from_meshes(
 
     # Initialize samples tensor with fill value 0 for empty meshes.
     samples = torch.zeros((num_meshes, num_samples, 3), device=meshes.device)
-
+    
+    
     # Only compute samples for non empty meshes
+    # TODO USE GRADS HERE???
     with torch.no_grad():
         areas, _ = mesh_face_areas_normals(verts, faces)  # Face areas can be zero.
         max_faces = meshes.num_faces_per_mesh().max().item()
@@ -129,12 +155,11 @@ def sample_points_from_meshes(
         )  # (N, F)
 
         # TODO (gkioxari) Confirm multinomial bug is not present with real data.
-        print(areas_padded.shape) # [1, 81920]
         sample_face_idxs = areas_padded.multinomial(
-            num_samples, replacement=False
+            num_samples, replacement=True
         )  # (N, num_samples)
         sample_face_idxs += mesh_to_face[meshes.valid].view(num_valid_meshes, 1)
-
+    
     # Get the vertex coordinates of the sampled faces.
     face_verts = verts[faces]
     v0, v1, v2 = face_verts[:, 0], face_verts[:, 1], face_verts[:, 2]
@@ -142,11 +167,11 @@ def sample_points_from_meshes(
     # Randomly generate barycentric coords.
     w0, w1, w2 = _rand_barycentric_coords(
         num_valid_meshes, num_samples, verts.dtype, verts.device
-    )
+    ) # [1, 100000] in loss, [2, 100000] in target
 
     # Use the barycentric coords to get a point on each sampled face.
     a = v0[sample_face_idxs]  # (N, num_samples, 3)
-    b = v1[sample_face_idxs]
+    b = v1[sample_face_idxs]  # (1, 100000, 3) in loss, but (2, 100000, 3) in target. Apparently totally okay!
     c = v2[sample_face_idxs]
     if use_centroids:
         # no random point on face but use the barycentric centroid
@@ -160,40 +185,23 @@ def sample_points_from_meshes(
         # Normals for the sampled points are face normals computed from
         # the vertices of the face in which the sampled point lies.
         normals = torch.zeros((num_meshes, num_samples, 3), device=meshes.device)
-        vert_normals = (v1 - v0).cross(v2 - v1, dim=1)
-        vert_normals = vert_normals / vert_normals.norm(dim=1, p=2, keepdim=True).clamp(
+        vert_normals_all = (v1 - v0).cross(v2 - v1, dim=1)
+        vert_normals_all = vert_normals_all / vert_normals_all.norm(dim=1, p=2, keepdim=True).clamp(
             min=sys.float_info.epsilon
         )
-        vert_normals = vert_normals[sample_face_idxs]
+        vert_normals = vert_normals_all[sample_face_idxs]
         normals[meshes.valid] = vert_normals
+        #check_outward_normals(samples, normals)
     
     if return_curvature:
-        assert num_meshes == 1
-        # edges = torch.cat([
-        #     faces[:, [0, 1]],
-        #     faces[:, [1, 2]],
-        #     faces[:, [2, 0]]
-        # ], dim=0)
-        # laplacian_matrix = laplacian(samples[0], edges)
-        # laplacian_matrix = laplacian_matrix.double()
-        # centroids = samples[0].double()
-        # mean_curvature = torch.sparse.mm(laplacian_matrix, centroids)
-        # curvature_projection = (mean_curvature * normals.squeeze(0)).sum(dim=-1)
-        # mean_val = curvature_projection.mean()
-        # std_dev = curvature_projection.std()
-        # curvatures = (curvature_projection - mean_val) / std_dev
-
+        #assert num_meshes == 1
         #compute curvature per vertex and then use mean of three vertex curvatures for each sample
-        vertex_curvatures = compute_mean_curvature(verts, faces).half()
+        vertex_normals = meshes.verts_normals_packed()
+        vertex_curvatures = compute_mean_curvature(verts, faces, vertex_normals, signed=True).half()
         curvatures_v0 = vertex_curvatures[faces[sample_face_idxs][:, :, 0]]
         curvatures_v1 = vertex_curvatures[faces[sample_face_idxs][:, :, 1]]
         curvatures_v2 = vertex_curvatures[faces[sample_face_idxs][:, :, 2]]
         sampled_face_curvatures = (curvatures_v0 + curvatures_v1 + curvatures_v2) / 3  # (N, num_samples)
-
-        
-         
-
-        
 
     if return_textures:
         # fragment data are of shape NxHxWxK. Here H=S, W=1 & K=1.
@@ -254,12 +262,18 @@ def sample_points_from_meshes(
         # pyre-fixme[61]: `normals` may not be initialized here.
         # pyre-fixme[61]: `textures` may not be initialized here.
         return samples, normals, textures
+    
+    # if return_normals and return_curvature and interpolate_features:
+    #     return samples, normals, sample_features, sampled_face_curvatures, sample_face_idxs
+    
     if return_normals and interpolate_features:  # return_textures is False
         # pyre-fixme[61]: `sample_features` may not be initialized here.
         # pyre-fixme[61]: `normals` may not be initialized here.
         return samples, normals, sample_features
+    
     if return_normals and return_curvature:
         return samples, normals, sampled_face_curvatures
+    
     if return_textures and interpolate_features:  # return_normals is False
         # pyre-fixme[61]: `sample_features` may not be initialized here.
         # pyre-fixme[61]: `textures` may not be initialized here.
