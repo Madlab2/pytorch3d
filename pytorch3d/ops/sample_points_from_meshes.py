@@ -71,6 +71,7 @@ def sample_points_from_meshes(
     return_textures: bool = False,
     interpolate_features: str =  None,
     use_centroids : bool = False,
+    use_verts : bool = False,
     return_curvature : bool = False
 ) -> Union[
     torch.Tensor,
@@ -134,7 +135,7 @@ def sample_points_from_meshes(
         raise ValueError("Meshes do not contain vertex features.")
 
     # hard coded
-    num_samples = 100000 # use 50.000 when no replacement sampling
+    #num_samples = 100000 # use 50.000 when no replacement sampling
 
     faces = meshes.faces_packed()
     mesh_to_face = meshes.mesh_to_faces_packed_first_idx()
@@ -144,21 +145,19 @@ def sample_points_from_meshes(
     # Initialize samples tensor with fill value 0 for empty meshes.
     samples = torch.zeros((num_meshes, num_samples, 3), device=meshes.device)
     
-    
     # Only compute samples for non empty meshes
     # TODO USE GRADS HERE???
-    with torch.no_grad():
-        areas, _ = mesh_face_areas_normals(verts, faces)  # Face areas can be zero.
-        max_faces = meshes.num_faces_per_mesh().max().item()
-        areas_padded = packed_to_padded(
-            areas, mesh_to_face[meshes.valid], max_faces
-        )  # (N, F)
-
-        # TODO (gkioxari) Confirm multinomial bug is not present with real data.
-        sample_face_idxs = areas_padded.multinomial(
-            num_samples, replacement=True
-        )  # (N, num_samples)
-        sample_face_idxs += mesh_to_face[meshes.valid].view(num_valid_meshes, 1)
+    #with torch.no_grad():
+    areas, _ = mesh_face_areas_normals(verts, faces)  # Face areas can be zero.
+    max_faces = meshes.num_faces_per_mesh().max().item()
+    areas_padded = packed_to_padded(
+        areas, mesh_to_face[meshes.valid], max_faces
+    )  # (N, F)
+    # TODO (gkioxari) Confirm multinomial bug is not present with real data.
+    sample_face_idxs = areas_padded.multinomial(
+        num_samples, replacement=True
+    )  # (N, num_samples)
+    sample_face_idxs += mesh_to_face[meshes.valid].view(num_valid_meshes, 1)
     
     # Get the vertex coordinates of the sampled faces.
     face_verts = verts[faces]
@@ -173,7 +172,10 @@ def sample_points_from_meshes(
     a = v0[sample_face_idxs]  # (N, num_samples, 3)
     b = v1[sample_face_idxs]  # (1, 100000, 3) in loss, but (2, 100000, 3) in target. Apparently totally okay!
     c = v2[sample_face_idxs]
-    if use_centroids:
+
+    if use_verts:
+        samples[meshes.valid] = a # use vertices directly
+    elif use_centroids:
         # no random point on face but use the barycentric centroid
         samples[meshes.valid] = 1/3 *a + 1/3 * b + 1/3 * c
     else:
