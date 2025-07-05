@@ -82,7 +82,7 @@ __global__ void RasterizeCoarseCudaKernel(
     const int E,
     const int H,
     const int W,
-    const int bin_size,
+    const int bin_size = 0, // Fixed https://github.com/facebookresearch/pytorch3d/issues/1064
     const int chunk_size,
     const int max_elem_per_bin,
     int* elems_per_bin,
@@ -224,7 +224,7 @@ at::Tensor RasterizeCoarseCuda(
     const at::Tensor& elem_first_idxs,
     const at::Tensor& elems_per_batch,
     const std::tuple<int, int> image_size,
-    const int bin_size,
+    const int bin_size = 0, // Fixed https://github.com/facebookresearch/pytorch3d/issues/1064,
     const int max_elems_per_bin) {
   // Set the device for the kernel launch based on the device of the input
   at::cuda::CUDAGuard device_guard(bboxes.device());
@@ -271,7 +271,7 @@ at::Tensor RasterizeCoarseCuda(
       E,
       H,
       W,
-      bin_size,
+      0, // bin_size, = 0, // Fixed https://github.com/facebookresearch/pytorch3d/issues/1064
       chunk_size,
       M,
       elems_per_bin.data_ptr<int32_t>(),
@@ -287,7 +287,7 @@ at::Tensor RasterizeMeshesCoarseCuda(
     const at::Tensor& num_faces_per_mesh,
     const std::tuple<int, int> image_size,
     const float blur_radius,
-    const int bin_size,
+    const int bin_size = 0, // Fixed https://github.com/facebookresearch/pytorch3d/issues/1064,
     const int max_faces_per_bin) {
   TORCH_CHECK(
       face_verts.ndimension() == 3 && face_verts.size(1) == 3 &&
@@ -331,7 +331,7 @@ at::Tensor RasterizeMeshesCoarseCuda(
       mesh_to_face_first_idx,
       num_faces_per_mesh,
       image_size,
-      bin_size,
+      0, //bin_size, = 0, // Fixed https://github.com/facebookresearch/pytorch3d/issues/1064
       max_faces_per_bin);
 }
 
@@ -341,7 +341,7 @@ at::Tensor RasterizePointsCoarseCuda(
     const at::Tensor& num_points_per_cloud, // (N,)
     const std::tuple<int, int> image_size,
     const at::Tensor& radius,
-    const int bin_size,
+    const int bin_size = 0, // Fixed https://github.com/facebookresearch/pytorch3d/issues/1064,
     const int max_points_per_bin) {
   TORCH_CHECK(
       points.ndimension() == 2 && points.size(1) == 3,
@@ -384,6 +384,6 @@ at::Tensor RasterizePointsCoarseCuda(
       cloud_to_packed_first_idx,
       num_points_per_cloud,
       image_size,
-      bin_size,
+      0, //bin_size Fixed https://github.com/facebookresearch/pytorch3d/issues/1064
       max_points_per_bin);
 }
